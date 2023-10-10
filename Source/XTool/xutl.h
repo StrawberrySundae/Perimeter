@@ -2,7 +2,9 @@
 #ifndef __XUTL_H
 #define __XUTL_H
 
-#define GET_PREF_PATH() SDL_GetPrefPath("KD Vision", "Perimeter")
+#include <cstdint>
+
+#define GET_PREF_PATH() SDL_GetPrefPath("K-D LAB", "Perimeter")
 #define PRINTF_FLOATING_FORMAT "%.*f"
 
 struct XBuffer;
@@ -20,22 +22,23 @@ uint64_t getPerformanceFrequency();
 ///Initializes clock
 void initclock();
 
-///Current time in integer ms since start
+///Current time in integer millisecs since start
 int clocki();
 
-///Current time in fractional ms since start
+///Current time in fractional millisecs since start
 double clockf();
+
+///Current time in integer microsecs since start
+uint64_t clock_us();
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 #include <vector>
 #include <filesystem>
 
-#ifndef _WIN32
 //Hacky way to "store" argc/argv so they can be accessed later like in Windows
-extern int __argc;
-extern std::vector<const char*> __argv;
-#endif
+extern int app_argc;
+extern std::vector<std::string> app_argv;
 
 ///Stores argc/argv from main()
 void setup_argcv(int argc, char *argv[]);
@@ -103,6 +106,9 @@ void encode_raw_float(XBuffer* buffer, float value);
 
 //Encodes a double using "raw format" in text form
 void encode_raw_double(XBuffer* buffer, double value);
+
+//Breaks lines that exceed max_width by adding endline
+std::string BreakLongLines(const char* ptext, size_t max_width, char endline = '\n');
 
 #define UTF8_TO_WCHAR(VAR, VAL) \
     std::u16string u16string_##VAR = utf8_to_utf16(VAL); \

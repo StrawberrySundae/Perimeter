@@ -3,7 +3,6 @@
 
 #include "InterfaceLogic.h"
 #include "Installer.h"
-//#include "ResourceDispatcher.h"
 #include "Save.h"
 #include "HotKey.h"
 #include "UserSingleProfile.h"
@@ -42,6 +41,7 @@ public:
 	void startCmdline(const CommandLineData& data);
 	void switchToInitialMenu();
 
+    void MultiplayerGameStarting();
 	void MultiplayerGameStart(const MissionDescription& mission);
     void MultiplayerGameRestore(const MissionDescription& mission);
 
@@ -146,8 +146,8 @@ public:
 
 	bool mouseLeftPressed() const { return mouseLeftPressed_; }
 	bool mouseRightPressed() const { return mouseRightPressed_; }
-	const Vect2f mousePosition() const { return mousePosition_; }
-    const Vect2f mousePositionDelta() const { return mousePositionDelta_; }
+	const Vect2f& mousePosition() const { return mousePosition_; }
+    const Vect2f& mousePositionDelta() const { return mousePositionDelta_; }
     const Vect2f& mousePositionRelative() const { return mousePositionRelative_; }
 	
 	const Vect2f mousePressControl() const { return mousePressControl_; }
@@ -196,7 +196,7 @@ public:
 	bool   cameraCursorInWindow;
 	bool  CursorOverInterface;
 		
-	terBuildingInstaller BuildingInstaller;
+	terBuildingInstaller* BuildingInstaller = nullptr;
 	
 	CShellLogicDispatcher  m_ShellDispatcher;
 
@@ -210,6 +210,10 @@ public:
 	LogicUpdater& getLogicUpdater() {
 		return logicUpdater;
 	}
+    
+    bool BuildingInstallerInited() const {
+        return BuildingInstaller && BuildingInstaller->inited();
+    }
 
 	void showReelModal(const char* videoFileName, const char* soundFileName, bool localized = false, bool stopBGMusic = true, int alpha = 255);
 	void showPictureModal(const char* pictureFileName, bool localized, int stableTime);
@@ -260,6 +264,8 @@ public:
 	void generalErrorOccured(GeneralErrorType error);
 
 	void abnormalNetCenterTermination();
+    
+    void updateLatencyInfo(const NetLatencyInfo& info);
 
 	void addStringToChatWindow(bool clanOnly, const std::string& newString, const std::string& locale);
 

@@ -48,17 +48,16 @@ There is instructions available in:
 
 ## Enhancements from original game
 
-
 - Modding support
   - [English](MODDING.eng.md)
 - Bugfixes
 - Right click on morph units to request basic units required
 - Automatic game assets searching in these paths order:
   - Path from content= command argument
-  - Linux: $HOME/.local/share/KD Vision/Perimeter/Content
-  - MacOS: $HOME/Library/Application Support/KD Vision/Perimeter/Content
+  - Linux: $HOME/.local/share/K-D LAB/Perimeter/Content
+  - MacOS: $HOME/Library/Application Support/K-D LAB/Perimeter/Content
   - Executable path
-  - Windows: %AppData%\\Roaming\\KD Vision\\Perimeter\\Content
+  - Windows: %AppData%\\Roaming\\K-D LAB\\Perimeter\\Content
   - Previous used content stored in settings
 - Support for 64 bits and other CPUs architectures than x86
 - Frame selection in battle/multiplayer menu and new colors
@@ -81,6 +80,16 @@ There is instructions available in:
 - Experimental support for MacOS
 - More than 4 player maps supported
 
+## Game settings:
+
+Application preferences paths: 
+- Linux: $HOME/.local/share/K-D LAB/Perimeter/
+- MacOS: $HOME/Library/Application Support/K-D LAB/Perimeter/
+- Windows: %AppData%\\Roaming\\K-D LAB\\Perimeter\
+
+NOTE: Some settings like current language, active profile, multiplayer settings and game content path can be found now at file Settings.ini inside application preferences directory.
+This file is automatically created/updated by the game.
+
 ## Repository contents
 
 * Source/ - Contains source code for the game and tools, most folders purpose can be guessed but some noteworthy:
@@ -98,7 +107,7 @@ There is instructions available in:
   * PluginMAX - _Working_ - Handles game 3D models loading from M3D/L3D files. Name comes from "3ds Max" which was used
     originally for creating and exporting these models.
   * Render - _Working_ - Provides graphics/rendering abstraction API, uses DirectX APIs under the hood which is provided
-    by dxvk-native and Exodus outside Windows platform.
+    by dxvk and Exodus outside Windows platform.
   * Scripts/ - _Working_ - Contains .prm files that are compiled using XPrm tool, *Library files that are loaded by game at runtime
     which contain some game configs/data and Texts.tdb containing ingame texts. Some game copies may contain a copy of this folder.
     * Triggers - Trigger chains containing maps and AI triggers/behaviors.
