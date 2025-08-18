@@ -1,11 +1,14 @@
 #include <set>
+#include <cinttypes>
 #include "StdAfx.h"
+#include "NetConnection.h"
 #include "NetPlayer.h"
 #include "EditFunctions.h"
 #include "Scripts/Config.hi"
 #include "GameContent.h"
 #include "Runtime.h"
 #include "files/files.h"
+#include "CommonEvents.h"
 
 PlayerData::PlayerData()
 {
@@ -24,11 +27,11 @@ void PlayerData::set(const std::string& name, NETID netid_, int playerIDIn, terB
 }
 
 void PlayerData::setName(const std::string& name) {
-    strncpy(playerName, name.c_str(), PLAYER_MAX_NAME_LEN);
+    strncpy(playerName, name.c_str(), PLAYER_MAX_NAME_LEN - 1);
 }
 
 void PlayerData::setNameInitial(const std::string& name) {
-    strncpy(playerNameInitial, name.c_str(), PLAYER_MAX_NAME_LEN);
+    strncpy(playerNameInitial, name.c_str(), PLAYER_MAX_NAME_LEN - 1);
 }
 
 void PlayerData::read(XBuffer& in) 
@@ -66,7 +69,7 @@ void PlayerData::write(XBuffer& out) const
 //-------------------------------------------------
 void MissionDescription::init()
 {
-	version = currentShortVersion;
+    version = currentShortVersion;
 	worldName_ = "";
 	difficulty = DIFFICULTY_HARD;
 	missionNumber = - 1;
@@ -205,7 +208,11 @@ void MissionDescription::read(XBuffer& in)
             in.read(&playersShufflingIndices[i], sizeof(playersShufflingIndices[0]));
         }
     }
-	in.read(&gameType_,sizeof(gameType_));
+    GameType tmp_type;
+    in.read(&tmp_type, sizeof(tmp_type));
+    if (gameType_ != GT_PLAY_RELL) {
+        gameType_ = tmp_type;
+    }
     in.read(&gameContent,sizeof(gameContent));
     uint32_t difficultyVal = 0;
     in > difficultyVal; difficulty.value() = static_cast<Difficulty>(difficultyVal);
@@ -233,7 +240,7 @@ void MissionDescription::read(XBuffer& in)
 
 void MissionDescription::write(XBuffer& out) const 
 {
-    out < StringOutWrapper(version.value());
+    out < StringOutWrapper(currentShortVersion);
     out < StringOutWrapper(worldName_.value());
     out < StringOutWrapper(missionName_);
     out < StringOutWrapper(missionDescriptionID.value());
@@ -265,59 +272,62 @@ void MissionDescription::simpleRead(XBuffer& in)
     in > StringInWrapper(missionName_);
     in > StringInWrapper(savePathKey_);
     in > StringInWrapper(originalSaveName.value());
-	unsigned char tmp;
-    in.read(&tmp, sizeof(tmp)); uint32_t playersDataLen = tmp;
+    uint8_t tu8;
+    int16_t ti16;
+    in.read(&tu8, sizeof(tu8)); uint32_t playersDataLen = tu8;
     std::string tmp_str;
     playersData.clear();
 	for (uint32_t i=0; i < playersDataLen; i++) {
         playersData.emplace_back();
-		in.read(&tmp, sizeof(tmp)); playersData[i].playerID=(int)tmp;
-		in.read(&tmp, sizeof(tmp)); playersData[i].realPlayerType=(RealPlayerType)tmp;
-		in.read(&tmp, sizeof(tmp)); playersData[i].belligerent=(terBelligerent)tmp;
-		in.read(&tmp, sizeof(tmp)); playersData[i].colorIndex=(int)tmp;
-		in.read(&tmp, sizeof(tmp)); playersData[i].clan=(int)tmp;
-		in.read(&tmp, sizeof(tmp)); playersData[i].difficulty=(Difficulty)tmp;
-		in.read(&tmp, sizeof(tmp)); playersData[i].handicap=(int)tmp;
+		in.read(&ti16, sizeof(ti16)); playersData[i].playerID = static_cast<int>(ti16);
+		in.read(&tu8, sizeof(tu8)); playersData[i].realPlayerType = static_cast<RealPlayerType>(tu8);
+		in.read(&tu8, sizeof(tu8)); playersData[i].belligerent = static_cast<terBelligerent>(tu8);
+		in.read(&tu8, sizeof(tu8)); playersData[i].colorIndex = static_cast<int>(tu8);
+		in.read(&tu8, sizeof(tu8)); playersData[i].clan = static_cast<int>(tu8);
+		in.read(&tu8, sizeof(tu8)); playersData[i].difficulty = static_cast<Difficulty>(tu8);
+		in.read(&tu8, sizeof(tu8)); playersData[i].handicap = static_cast<int>(tu8);
 		in.read(&playersData[i].flag_playerStartReady, sizeof(playersData[i].flag_playerStartReady) );
         in > StringInWrapper(tmp_str);
         playersData[i].setName(tmp_str);
         in > StringInWrapper(tmp_str);
         playersData[i].setNameInitial(tmp_str);
 	}
-	in.read(&tmp, sizeof(tmp)); playerAmountScenarioMax=(int)tmp;
-	in.read(&tmp, sizeof(tmp)); gameType_=(GameType)tmp;
-	in.read(&tmp, sizeof(tmp)); activePlayerID=(int)tmp;
-    in.read(&tmp, sizeof(tmp)); missionNumber=(int)tmp;
-    in.read(&tmp, sizeof(tmp)); gameContent=(int)tmp;
+	in.read(&tu8, sizeof(tu8)); playerAmountScenarioMax = static_cast<int>(tu8);
+	in.read(&tu8, sizeof(tu8)); gameType_ = static_cast<GameType>(tu8);
+	in.read(&tu8, sizeof(tu8)); activePlayerID = static_cast<int>(tu8);
+    in.read(&ti16, sizeof(ti16)); missionNumber = static_cast<int>(ti16);
+    in.read(&tu8, sizeof(tu8)); gameContent = static_cast<int>(tu8);
     refresh();
 }
 
 void MissionDescription::simpleWrite(XBuffer& out) const 
 {
-    out < StringOutWrapper(version.value());
+    out < StringOutWrapper(currentShortVersion);
     out < StringOutWrapper(worldName_.value());
     out < StringOutWrapper(missionName_);
     out < StringOutWrapper(savePathKey_);
     out < StringOutWrapper(originalSaveName.value());
-	unsigned char tmp;
-    tmp=(unsigned char)playersData.size();		out.write(&tmp, sizeof(tmp));
+    uint8_t tu8;
+    int16_t ti16;
+    tu8=static_cast<uint8_t>(playersData.size());
+    out.write(&tu8, sizeof(tu8));
 	for (int i=0; i<playersData.size(); i++){
-		tmp=(unsigned char)playersData[i].playerID;			out.write(&tmp, sizeof(tmp));
-		tmp=(unsigned char)playersData[i].realPlayerType;	out.write(&tmp, sizeof(tmp));
-		tmp=(unsigned char)playersData[i].belligerent;		out.write(&tmp, sizeof(tmp));
-		tmp=(unsigned char)playersData[i].colorIndex;		out.write(&tmp, sizeof(tmp));
-		tmp=(unsigned char)playersData[i].clan;				out.write(&tmp, sizeof(tmp));
-		tmp=(unsigned char)playersData[i].difficulty;		out.write(&tmp, sizeof(tmp));
-		tmp=(unsigned char)playersData[i].handicap;			out.write(&tmp, sizeof(tmp));
+        ti16=static_cast<int16_t>(playersData[i].playerID);			out.write(&ti16, sizeof(ti16));
+		tu8=static_cast<uint8_t>(playersData[i].realPlayerType);	out.write(&tu8, sizeof(tu8));
+		tu8=static_cast<uint8_t>(playersData[i].belligerent);		out.write(&tu8, sizeof(tu8));
+		tu8=static_cast<uint8_t>(playersData[i].colorIndex);		out.write(&tu8, sizeof(tu8));
+		tu8=static_cast<uint8_t>(playersData[i].clan);				out.write(&tu8, sizeof(tu8));
+		tu8=static_cast<uint8_t>(playersData[i].difficulty);		out.write(&tu8, sizeof(tu8));
+		tu8=static_cast<uint8_t>(playersData[i].handicap);			out.write(&tu8, sizeof(tu8));
 		out.write(&playersData[i].flag_playerStartReady, sizeof(playersData[i].flag_playerStartReady) );
         out < StringOutWrapper(playersData[i].name());
         out < StringOutWrapper(playersData[i].nameInitial());
 	}
-	tmp=(unsigned char)playerAmountScenarioMax;		out.write(&tmp, sizeof(tmp));
-	tmp=(unsigned char)gameType_;					out.write(&tmp, sizeof(tmp));
-    tmp=(unsigned char)activePlayerID;				out.write(&tmp, sizeof(tmp));
-    tmp=(unsigned char)missionNumber;				out.write(&tmp, sizeof(tmp));
-    tmp=(unsigned char)gameContent;					out.write(&tmp, sizeof(tmp));
+	tu8=static_cast<uint8_t>(playerAmountScenarioMax);		out.write(&tu8, sizeof(tu8));
+	tu8=static_cast<uint8_t>(gameType_);					out.write(&tu8, sizeof(tu8));
+    tu8=static_cast<uint8_t>(activePlayerID);				out.write(&tu8, sizeof(tu8));
+    ti16=static_cast<int16_t >(missionNumber);				out.write(&ti16, sizeof(ti16));
+    tu8=static_cast<uint8_t>(gameContent);					out.write(&tu8, sizeof(tu8));
 }
 
 std::string MissionDescription::resolve_mission_path(const std::string& path) {
@@ -382,6 +392,7 @@ bool MissionDescription::isAllRealPlayerStartReady()
                 if (!playersData[i].flag_playerStartReady) {
                     return false;
                 }
+                [[fallthrough]];
             case REAL_PLAYER_TYPE_AI:
             case REAL_PLAYER_TYPE_PLAYER_AI:
                 players++;
@@ -396,19 +407,22 @@ bool MissionDescription::isAllRealPlayerStartReady()
 int MissionDescription::playersAmount() const 
 {
 	int cntPlayers=0;
-	for(unsigned int i=0; i<playerAmountScenarioMax; i++){
-		if(playersData[i].realPlayerType != REAL_PLAYER_TYPE_CLOSE && playersData[i].realPlayerType != REAL_PLAYER_TYPE_OPEN)
-			cntPlayers++;
+	for(unsigned int i=0; i<playerAmountScenarioMax; i++) {
+		if(playersData[i].realPlayerType != REAL_PLAYER_TYPE_CLOSE 
+        && playersData[i].realPlayerType != REAL_PLAYER_TYPE_OPEN) {
+            cntPlayers++;
+        }
 	}
 	return cntPlayers;
 }
 
-int MissionDescription::playersMaxEasily() const
+int MissionDescription::playerSlotsAvailable() const
 {
 	int cntPlayers=0;
-	for(unsigned int i=0; i<playerAmountScenarioMax; i++){
-		if(playersData[i].realPlayerType != REAL_PLAYER_TYPE_CLOSE)
-			cntPlayers++;
+	for (unsigned int i=0; i < playerAmountScenarioMax; i++) {
+		if (playersData[i].realPlayerType != REAL_PLAYER_TYPE_CLOSE) {
+            cntPlayers++;
+        }
 	}
 	return cntPlayers;
 }
@@ -656,14 +670,17 @@ bool MissionDescription::changePlayerHandicap(int playerIdx, int handicap)
     return false;
 }
 
-PlayerData& MissionDescription::getActivePlayerData() 
-{
-	for (int i = 0; i < playerAmountScenarioMax; i++) {
-		if (playersData[i].playerID == activePlayerID) {
-			return playersData[i];
-		}
-	}
-	return playersData[0];
+const PlayerData* MissionDescription::getPlayerData(int playerID) const {
+    for (int i = 0; i < playerAmountScenarioMax; i++) {
+        if (playersData[i].playerID == playerID) {
+            return &(playersData[i]);
+        }
+    }
+    return nullptr;
+}
+
+PlayerData* MissionDescription::getActivePlayerData() {
+	return const_cast<PlayerData*>(getPlayerData(activePlayerID));
 }
 
 void MissionDescription::packPlayerIDs()
@@ -688,7 +705,11 @@ void MissionDescription::setSinglePlayerDifficulty(Difficulty difficutyIn)
 
 void MissionDescription::shufflePlayers()
 {
-	shuffle(&playersShufflingIndices[0], &playersShufflingIndices[0] + playerAmountScenarioMax, std::default_random_engine(clocki()));
+	shuffle(
+        playersShufflingIndices.data(),
+        playersShufflingIndices.data() + playerAmountScenarioMax,
+        std::default_random_engine(clocki())
+    );
 }
 
 void MissionDescription::clearData() {
@@ -706,9 +727,49 @@ void MissionDescription::fitPlayerArrays() {
     }
     while (playersShufflingIndices.size() != playersData.size()) {
         if (playersShufflingIndices.size() < playersData.size()) {
-            playersShufflingIndices.emplace_back(playersShufflingIndices.size());
+            playersShufflingIndices.emplace_back(static_cast<int>(playersShufflingIndices.size()));
         } else {
             playersShufflingIndices.pop_back();
         }
     }
+}
+
+void MissionDescription::PrintInfo() const {
+    printf("==== MissionDescription ====\n");
+    printf(
+            "Path '%s' world '%s' save '%s' mission '%s' (%" PRIi32 ")\n",
+            originalSaveName.value().c_str(),
+            worldName().c_str(),
+            savePathKey().c_str(),
+            missionName().c_str(),
+            missionNumber
+    );
+    printf(
+            "GameType: %" PRIi32 "\n"
+            "Players: %" PRIi32 " max %" PRIi32 " active %" PRIi32
+            "\n",
+            gameType_,
+            playersAmount(),
+            playerAmountScenarioMax,
+            activePlayerID
+    );
+    for (auto& player : playersData) {
+        printf(
+                "-> ID %" PRIi32 " Type %" PRIu32 " NETID 0x%" PRIX64
+                " Faction %" PRIu32 " Color %" PRIi32 " Clan %" PRIi32
+                " Difficulty %" PRIu32 " HC %" PRIi32 " StartReady %" PRIi32 " GameReady %" PRIi32 " "
+                "\n",
+                player.playerID,
+                static_cast<uint32_t>(player.realPlayerType.value()),
+                player.netid,
+                static_cast<uint32_t>(player.belligerent.value()),
+                player.colorIndex,
+                player.clan,
+                static_cast<uint32_t>(player.difficulty.value()),
+                player.handicap,
+                player.flag_playerStartReady,
+                player.flag_playerGameReady
+        );
+    }
+    printf("==== ==== ==== ====\n");
 }

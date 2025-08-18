@@ -2,12 +2,9 @@
 #include <climits>
 #include "tweaks.h"
 
-#ifndef PERIMETER_HEADLESS
-#define WIN32_LEAN_AND_MEAN		// Exclude rarely-used stuff from Windows headers
-#include <windows.h>
-#endif
-
-#include "StdAfx.h"
+#include "StdAfxTriggerEditor.h"
+#include "EditArchive.h"
+#include "BinaryArchive.h"
 #include "XPrmArchive.h"
 #include "codepages/codepages.h"
 #include "TriggerExport.h"
@@ -35,7 +32,7 @@ bool ConditionSwitcher::check(AIPlayer& aiPlayer)
 	}
 }
 
-void ConditionSwitcher::checkEvent(AIPlayer& aiPlayer, const Event& event) 
+void ConditionSwitcher::checkEvent(AIPlayer& aiPlayer, const Event* event) 
 {
     FOR_EACH_AUTO(conditions, ci)
 		if(ci->condition)

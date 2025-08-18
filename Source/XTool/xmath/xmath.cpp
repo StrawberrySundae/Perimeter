@@ -11,6 +11,7 @@
 #include "xmath.h"
 #include "xbuffer.h"
 #include "xstream.h"
+#include "xerrhand.h"
 
 ////////////////////////////////////////////////////////////////////////////////
 //Assert that types are IEEE compilant
@@ -23,9 +24,11 @@ static_assert(sizeof(float) * CHAR_BIT == 32);
 static_assert(sizeof(double) * CHAR_BIT == 64);
 static_assert(FLT_RADIX == 2);
 static_assert(FLT_EVAL_METHOD == 0);
-#ifdef FLT_DECIMAL_DIG //Unavailable in Dockcross for some reason
+#ifdef FLT_DECIMAL_DIG
 static_assert(FLT_DECIMAL_DIG == 9);
 static_assert(DBL_DECIMAL_DIG == 17);
+#endif
+#ifdef FLT_HAS_SUBNORM
 static_assert(FLT_HAS_SUBNORM == 1);
 static_assert(DBL_HAS_SUBNORM == 1);
 #endif
@@ -72,12 +75,23 @@ const Vect3f Vect3f::I_  (-1,  0,  0);
 const Vect3f Vect3f::J_  ( 0, -1,  0);
 const Vect3f Vect3f::K_  ( 0,  0, -1);
 const Vect3f Vect3f::ID  ( 1,  1, 1);
+const Vect4f Vect4f::ZERO(0, 0, 0, 0);
+const Vect4f Vect4f::ID  (1, 1, 1, 1);
 
 const Mat3d Mat3d::ZERO (Vect3d::ZERO, Vect3d::ZERO);
 const Mat3d Mat3d::ID   (Vect3d(1, 1, 1), Vect3d::ZERO);
 
 const Mat3f Mat3f::ZERO (Vect3f::ZERO, Vect3f::ZERO);
 const Mat3f Mat3f::ID   (Vect3f(1, 1, 1), Vect3f::ZERO);
+
+const Mat4f Mat4f::ZERO (0, 0, 0, 0,
+                         0, 0, 0, 0,
+                         0, 0, 0, 0,
+                         0, 0, 0, 0);
+const Mat4f Mat4f::ID   (1, 0, 0, 0,
+                         0, 1, 0, 0,
+                         0, 0, 1, 0,
+                         0, 0, 0, 1);
 
 const MatXd MatXd::ID   (Mat3d::ID, Vect3d::ZERO);
 
@@ -92,8 +106,15 @@ const Se3f  Se3f::ID    (QuatF::ID, Vect3f::ZERO);
 const Mat2f Mat2f::ID   (1, 0, 0, 1);
 const MatX2f MatX2f::ID   (Mat2f::ID, Vect2f::ZERO);
 
-RandomGenerator xm_random_generator;
-int RandomGenerator::operator()(){ return ((value = value*214013L + 2531011L) >> 16) & 0x7fff; }
+int RandomGenerator::operator()() {
+#if defined(PERIMETER_DEBUG_ASSERT) && defined(_PERIMETER_)
+    extern bool MT_IS_LOGIC();
+    if (logic) {
+        xassert(MT_IS_LOGIC());
+    }
+#endif
+    return ((value = value*214013L + 2531011L) >> 16) & 0x7fff;
+}
 
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -445,6 +466,20 @@ Mat4f& Mat4f::postmult(const Mat4f& M)
 	 return mult(N, M);
 }
 
+bool Mat4f::eq(const Mat4f& v, float delta) const {
+    const float* va = &v.xx;
+    const float* a = &xx;
+    if (memcmp(a, va, sizeof(float) * 16) == 0) {
+        //Memory representation is same
+        return true;
+    }
+    for (int i = 0; i < 16; ++i) {
+        if (!(xm::abs(a[i] - va[i]) < delta)) {
+            return false;
+        } 
+    }
+    return true;
+}
 
 
 ///////////////////////////////////////////////////////////////////////////////

@@ -1,5 +1,7 @@
 #include "StdAfxRD.h"
 #include "Line3d.h"
+#include "DrawBuffer.h"
+#include "VertexFormat.h"
 
 cLine3d::cLine3d() : cAnimUnkObj(KIND_LINE3D)
 {
@@ -29,7 +31,6 @@ void cLine3d::Draw(cCamera *DrawNode)
 {
 	MTEnter mtlock(lock);
 	if(Vertex.size()<2) return;
-	DrawStrip strip;
 	
 	if(DrawNode->GetCameraPass()==SCENENODE_OBJECTSORT_NOZ)
 		gb_RenderDevice->SetNoMaterial(GetAttribute(ATTRUNKOBJ_ADDBLEND)?ALPHA_ADDBLEND:ALPHA_BLEND,0,GetTexture(1));
@@ -38,21 +39,22 @@ void cLine3d::Draw(cCamera *DrawNode)
 
 //	float width=(DrawNode->GetCameraPass()==SCENENODE_OBJECTSORT_NOZ)?0.5f:1.0f;
 
-	strip.Begin();
+    gb_RenderDevice->SetWorldMat4f(nullptr);
 	Vect3f Orientation;
 
-	sVertexXYZDT1 v0,v1;
-	for( int nVertex=Vertex.size()-1; nVertex>=0; nVertex-- )
+    int steps = static_cast<int>(Vertex.size());
+    DrawBuffer* db = gb_RenderDevice->GetDrawBuffer(sVertexXYZDT1::fmt, PT_TRIANGLESTRIP, (steps + 1) * 2);
+	sVertexXYZDT1* vb = db->LockTriangleStripSteps<sVertexXYZDT1>(steps);
+    size_t i = 0;
+	for( int nVertex=steps-1; nVertex>=0; nVertex-- )
 	{
 		if(nVertex>0)
 		{
+            Orientation=Vertex[nVertex].pos-Vertex[nVertex-1].pos;
+            FastNormalize(Orientation);
 /*
-			Orientation=Vertex[nVertex].p-Vertex[nVertex-1].p;
-			FastNormalize(Orientation);
 			Orientation.precross(DrawNode->GetWorldK()*Vertex[nVertex].width);
 /*/
-			Orientation=Vertex[nVertex].pos-Vertex[nVertex-1].pos;
-			FastNormalize(Orientation);
 
 			Vect3f o1=(Vertex[nVertex].pos+Vertex[nVertex-1].pos)*0.5f-DrawNode->GetPos();
 			FastNormalize(o1);
@@ -61,15 +63,17 @@ void cLine3d::Draw(cCamera *DrawNode)
 /**/
 		}
 
-		v0.pos=Vertex[nVertex].pos+Orientation; 
-		v1.pos=Vertex[nVertex].pos-Orientation;
+        sVertexXYZDT1& v0 = vb[i++];
+        sVertexXYZDT1& v1 = vb[i++];
+		v0.setPos(Vertex[nVertex].pos+Orientation); 
+		v1.setPos(Vertex[nVertex].pos-Orientation);
 		v0.u1()=   v1.u1()=Vertex[nVertex].v-GetFrame()->GetPhase();
 		v0.v1()=0; v1.v1()=1;
-		v0.diffuse=v1.diffuse=Vertex[nVertex].color;
-		strip.Set(v0,v1);
+		v0.diffuse=v1.diffuse=gb_RenderDevice->ConvertColor(Vertex[nVertex].color);
 	}
 
-	strip.End();
+    db->Unlock();
+    db->EndTriangleStrip();
 }
 
 void cLine3d::UpdateVertex(int num_vertex, sVertexLine* varray)

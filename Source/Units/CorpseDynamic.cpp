@@ -31,16 +31,16 @@ terCorpseDynamic::~terCorpseDynamic()
 
 void terCorpseDynamic::setParent(terUnitBase* p)
 {
-	OriginalAttribute = &p->attr();
+	OriginalAttribute = p->attr();
 	avatar()->SetModelPoint(p->avatar()->GetModelPoint());
 	
-	BodyPoint->build(*attr().rigidBodyPrm, avatar()->GetModelPoint(), p->GetRigidBodyPoint()->boxMin(), p->GetRigidBodyPoint()->boxMax());
+	BodyPoint->build(*attr()->rigidBodyPrm, avatar()->GetModelPoint(), p->GetRigidBodyPoint()->boxMin(), p->GetRigidBodyPoint()->boxMax());
 
 	setPose(p->pose(),false);
 //	avatar()->setPose(p->pose());
 	
-	if(p->needCrater() && p->attr().craterRadius())
-		setCrater(p->attr().craterRadius(),p->attr().craterDelay(),p->attr().craterID());
+	if(p->needCrater() && p->attr()->craterRadius())
+		setCrater(p->attr()->craterRadius(),p->attr()->craterDelay(),p->attr()->craterID());
 
 	if(p->GetRigidBodyPoint())
 		BodyPoint->setVelocity(p->GetRigidBodyPoint()->velocity());
@@ -48,6 +48,8 @@ void terCorpseDynamic::setParent(terUnitBase* p)
 	for(int i = 0; i < OriginalAttribute->effectsData.effects.size(); i++){
 		terEffectID id=OriginalAttribute->effectsData.effects[i].effectID;
 		switch(id){
+        default:
+            break;
 		case EFFECT_ID_UNIT_SMOKE:
 			if(EffectKey* key = OriginalAttribute->getEffect(OriginalAttribute->effectsData.effects[i].effectID)){
 				cEffect* effect = terScene->CreateScaledEffect(*key,avatar()->GetModelPoint());

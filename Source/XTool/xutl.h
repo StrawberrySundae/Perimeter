@@ -2,14 +2,16 @@
 #ifndef __XUTL_H
 #define __XUTL_H
 
-#define GET_PREF_PATH() SDL_GetPrefPath("KD Vision", "Perimeter")
+#include <cstdint>
+
+#define GET_PREF_PATH() SDL_GetPrefPath("K-D LAB", "Perimeter")
 #define PRINTF_FLOATING_FORMAT "%.*f"
 
-struct XBuffer;
+#define PRIsize "zu"
 
-unsigned int XRnd(unsigned int m);
-void XRndSet(unsigned int m);
-unsigned int XRndGet();
+typedef uint64_t arch_flags;
+
+struct XBuffer;
 
 ///Get high performance counter
 uint64_t getPerformanceCounter();
@@ -20,22 +22,23 @@ uint64_t getPerformanceFrequency();
 ///Initializes clock
 void initclock();
 
-///Current time in integer ms since start
+///Current time in integer millisecs since start
 int clocki();
 
-///Current time in fractional ms since start
+///Current time in fractional millisecs since start
 double clockf();
+
+///Current time in integer microsecs since start
+uint64_t clock_us();
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 #include <vector>
 #include <filesystem>
 
-#ifndef _WIN32
 //Hacky way to "store" argc/argv so they can be accessed later like in Windows
-extern int __argc;
-extern std::vector<const char*> __argv;
-#endif
+extern int app_argc;
+extern std::vector<std::string> app_argv;
 
 ///Stores argc/argv from main()
 void setup_argcv(int argc, char *argv[]);
@@ -104,8 +107,37 @@ void encode_raw_float(XBuffer* buffer, float value);
 //Encodes a double using "raw format" in text form
 void encode_raw_double(XBuffer* buffer, double value);
 
+//Breaks lines that exceed max_width by adding endline
+std::string BreakLongLines(const char* ptext, size_t max_width, char endline = '\n');
+
 #define UTF8_TO_WCHAR(VAR, VAL) \
     std::u16string u16string_##VAR = utf8_to_utf16(VAL); \
     const wchar_t* wchar_##VAR = checked_reinterpret_cast_ptr<const char16_t, const wchar_t>( u16string_##VAR.c_str());
 
-#endif
+
+static const char* ws = " \t\n\r\f\v";
+
+// trim from end of string (right)
+inline std::string& rtrim(std::string& s, const char* t = ws)
+{
+    s.erase(s.find_last_not_of(t) + 1);
+    return s;
+}
+
+// trim from beginning of string (left)
+inline std::string& ltrim(std::string& s, const char* t = ws)
+{
+    s.erase(0, s.find_first_not_of(t));
+    return s;
+}
+
+// trim from both ends of string (right then left)
+inline std::string& trim(std::string& s, const char* t = ws)
+{
+    return ltrim(rtrim(s, t), t);
+}
+
+///Computes the arch flags for this build
+arch_flags computeArchFlags();
+
+#endif //__XUTL_H

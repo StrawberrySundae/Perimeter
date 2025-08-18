@@ -1,5 +1,6 @@
 #include <SDL.h>
 #include "StdAfx.h"
+#include "UnitAttribute.h"
 #include "GameContent.h"
 #include "files/files.h"
 
@@ -11,6 +12,7 @@ namespace scripts_export {
 #include "BelligerentSelect.h"
 #include "qd_textdb.h"
 #include "Localization.h"
+#include "codepages/codepages.h"
 
 #include <map>
 #include <set>
@@ -19,12 +21,15 @@ extern bool content_debug_flag;
 
 int firstMissionNumber = 0;
 
-///The identified content at the root of game content, this only can be one thing 
+static std::map<std::string, ModMetadata> gameMods;
+
 GAME_CONTENT terGameContentBase = CONTENT_NONE;
-///All available contents in this installation (base + addons)
 GAME_CONTENT terGameContentAvailable = CONTENT_NONE;
-///Current selected content, can be several or only one in available content (when user chooses one)
 GAME_CONTENT terGameContentSelect = CONTENT_NONE;
+
+std::map<std::string, ModMetadata>& getGameMods() {
+    return gameMods;
+}
 
 bool mapContentPath(const std::string& source, const std::string& destination, const filesystem_scan_options* options = nullptr) {
     std::string source_path = convert_path_content(source);
@@ -117,10 +122,6 @@ void loadMappings(const std::string& path, const filesystem_scan_options* option
 void findGameContent() {
     //Get the path where game content is located by scanning diff paths
     std::vector<std::string> paths;
-
-    //Check cmdline first
-    const char* cmdlinePath = check_command_line("content");
-    if (cmdlinePath) paths.emplace_back(cmdlinePath);
     
     //Add path stored in settings if any
     IniManager* ini = getSettings();
@@ -167,6 +168,22 @@ void findGameContent() {
     //Path stored in settings from last run
     if (settingsPath) paths.emplace_back(settingsPath);
 
+    //Check cmdline, overrides other methods
+    const char* cmdlinePath = check_command_line("content");
+    if (cmdlinePath) {
+        paths.clear();
+        paths.emplace_back(cmdlinePath);
+    }
+
+#ifdef GPX
+    paths.clear();
+#ifdef EMSCRIPTEN
+    paths.emplace_back("/");
+#else
+    paths.emplace_back("./");
+#endif
+#endif
+
     //Check paths for Resource dir
     std::set<std::string> scannedPaths;
     for (std::string rootPathStr : paths) {
@@ -181,7 +198,7 @@ void findGameContent() {
             //Set current path to game directory to allow relative paths inside
             //This is specially needed for MacOS as it forbids writing inside .app
             std::filesystem::current_path(rootPath);
-            if (scan_resource_paths()) {
+            if (scan_resource_paths("./")) {
                 if (convert_path_content("Perimeter.ini").empty()) {
                     fprintf(stderr, "Path for content doesn't contain game: %s\n", rootPathStr.c_str());
                 } else {
@@ -213,15 +230,62 @@ void addGameContent(GAME_CONTENT content) {
     terGameContentAvailable = static_cast<GAME_CONTENT>(terGameContentAvailable | content);
 }
 
+
+///ET specific workarounds for broken assets
+void workaroundET() {
+    std::map<std::string, std::string> paths;
+    const std::string& locpath = getLocDataPath();
+
+    for (auto faction : { BELLIGERENT_FACTION::EXODUS, BELLIGERENT_FACTION::EMPIRE, BELLIGERENT_FACTION::HARKBACK }) {
+        std::string factionpath = locpath + "Voice/" + getBelligerentFactionName(faction);
+
+        //These audios are missing for harkback since ET doesn't have this faction
+        //On english version these audios just say "Gun", "Ready" or "Oops"
+        //On russian version Exodus has Empire files for these audios
+        paths[factionpath + "_Voice_Building_Ready.wav"] = factionpath + "_Voice_ElectroGun_Ready.wav";
+        paths[factionpath + "_Voice_Building_Destroyed.wav"] = factionpath + "_Voice_ElectroGun_Destroyed.wav";
+    }
+
+    //Map the resource paths
+    for (const auto& entry : paths) {
+        mapContentPath(entry.first, entry.second);
+    }
+}
+
+///Maps Icons/Video in current locale folder if any
+void loadLocalizedResources(const std::string& content_path = "") {
+    //Localized resources if any
+    const std::string& locpath = getLocDataPath();
+    for (auto& dir : {
+            "Icons",
+            "Video"
+    }) {
+        std::string path = content_path + locpath + dir;
+        if (get_content_entry(path) != nullptr) {
+            mapContentPath(path, std::string("Resource/") + dir);
+        }
+    }
+}
+
+///Detects if path is Perimeter: ET
+bool isContentET(const std::string& path) {
+    return get_content_entry(path + "Resource/Missions/01x4.spg")
+    && get_content_entry(path + "Resource/Missions/25x2.spg");
+}
+
 ///Load ET content selectively
-void loadAddonET(const std::string& addonName, const std::string& addonDir) {
+void loadAddonET(ModMetadata& mod) {
     //This is ET content as addon, skip if main content is not Perimeter
     if (terGameContentBase != GAME_CONTENT::PERIMETER) {
-        printf("Skipping ET content as base content is not Perimeter: %s\n", addonName.c_str());
+        printf("Skipping ET content as base content is not Perimeter: %s\n", mod.mod_name.c_str());
         return;
     }
-    printf("Detected ET content at: %s\n", addonName.c_str());
-    std::map<std::string, std::string> paths;
+
+    bool legacy = convert_path_content(mod.path + "/Resource/Models/Main/inferno.l3d").empty();
+    printf("Detected ET content at: %s type: %s\n", mod.mod_name.c_str(), legacy ? "legacy" : "reworked");
+    
+    //Add maps src to dst or src as dst if empty
+    std::map<std::string, std::vector<std::string>> paths;
     
     //Scan the hardcoded unit attributes data
     for(int i = 0; i < scripts_export::unitAttributeDataTable.size(); i++) {
@@ -243,6 +307,7 @@ void loadAddonET(const std::string& addonName, const std::string& addonDir) {
                     default:
                         continue;
                 }
+                break;
             //ET stations
             case UNIT_ATTRIBUTE_ELECTRO_STATION1:
             case UNIT_ATTRIBUTE_ELECTRO_STATION2:
@@ -258,88 +323,106 @@ void loadAddonET(const std::string& addonName, const std::string& addonDir) {
         }
 
         //Copy model paths
-        paths[src.LogicName] = "";
+        paths[src.LogicName] = {};
         for (int j = 0; j < src.ModelNameNum; ++j) {
-            paths[src.ModelNameArray[j]] = "";
+            paths[src.ModelNameArray[j]] = {};
         }
     }
     
-    //Add maps
-    paths["resource/battle"] = "";
-    paths["resource/battle/scenario"] = "resource/battle"; //Make ET campaign maps available normally since we cant unlock em
-    paths["resource/multiplayer"] = "";
-    paths["resource/worlds"] = "";
-    paths["resource/geotx"] = "";
-    paths["Resource/Models/Environment"] = "";
-    
     //Add textures, these don't overlap original harkback structures textures
-    paths["resource/models/main/exodus"] = "";
-    paths["resource/models/main/empire"] = "";
-    paths["resource/models/main/harkbackhood"] = "";
-    paths["resource/models/main/textures"] = "";
+    paths["resource/models/main/exodus"] = {};
+    paths["resource/models/main/empire"] = {};
+    paths["resource/models/main/harkbackhood"] = {};
+    paths["resource/models/main/textures"] = {};
     
     //More stuff
-    paths["resource/fx"] = "";
-    paths["resource/effect"] = "";
-    paths["resource/sounds/eff"] = "";
-    
-    //Use exodus textures for generic units so harkback can have them and dont look like toys
-    std::string harktextures = "Resource/Models/Main/Harkbackhood/";
-    paths["Resource/Models/Main/Exodus/state_bump.tga"] = harktextures;
-    paths["Resource/Models/Main/Exodus/Gun.tga"] = harktextures;
-    paths["Resource/Models/Main/Exodus/Impaler.tga"] = harktextures;
-    paths["Resource/Models/Main/Exodus/efla.tga"] = harktextures;
-    paths["Resource/Models/Main/Exodus/Conductor.tga"] = harktextures;
+    paths["resource/fx"] = {};
+    paths["resource/sounds"] = {};
+    paths["resource/battle"] = {};
 
-    if (terGameContentSelect != PERIMETER_ET) {
+    if (legacy) {
+        paths["Resource/controls.ini"] = {};
+        paths["resource/multiplayer"] = {};
+        paths["resource/geotx"] = {};
+        paths["resource/worlds"] = {};
+        paths["resource/models/environment"] = {};
+        paths["resource/effect"] = {};
+        
+        //Use exodus textures for generic units so harkback can have them and dont look like toys
+        std::string exodus_textures = "Resource/Models/Main/Exodus/";
+        std::string harkback_textures = "Resource/Models/Main/Harkbackhood/";
+        for (auto& tex: {
+                "state_bump.tga"
+                "Gun.tga"
+                "Impaler.tga"
+                "efla.tga"
+                "Conductor.tga"
+        }) {
+            paths[exodus_textures + tex] = { harkback_textures + tex };
+        }
+
         //Map mechanical spirit (inferno) and spirit trap (catcher), for future use?
-        paths["Resource/Models/Main/build_harkbackers_st.l3d"] = "build_Resource/Models/Main/inferno.l3d";
-        paths["Resource/Models/Main/build_harkbackers_st.m3d"] = "build_Resource/Models/Main/inferno.m3d";
-        paths["Resource/Models/Main/build_filth_navigator.l3d"] = "build_Resource/Models/Main/catcher.l3d";
-        paths["Resource/Models/Main/build_filth_navigator.m3d"] = "build_Resource/Models/Main/catcher.m3d";
-        paths["Resource/Models/Main/harkbackers_st.l3d"] = "Resource/Models/Main/inferno.l3d";
-        paths["Resource/Models/Main/harkbackers_st.m3d"] = "Resource/Models/Main/inferno.m3d";
-        paths["Resource/Models/Main/filth_navigator.l3d"] = "Resource/Models/Main/catcher.l3d";
-        paths["Resource/Models/Main/filth_navigator.m3d"] = "Resource/Models/Main/catcher.m3d";
-    }
+        paths["Resource/Models/Main/build_harkbackers_st.l3d"] = { "Resource/Models/Main/build_inferno.l3d" };
+        paths["Resource/Models/Main/build_harkbackers_st.m3d"] = { "Resource/Models/Main/build_inferno.m3d" };
+        paths["Resource/Models/Main/build_filth_navigator.l3d"] = { "Resource/Models/Main/build_catcher.l3d" };
+        paths["Resource/Models/Main/build_filth_navigator.m3d"] = { "Resource/Models/Main/build_catcher.m3d" };
+        paths["Resource/Models/Main/harkbackers_st.l3d"] = { "Resource/Models/Main/inferno.l3d" };
+        paths["Resource/Models/Main/harkbackers_st.m3d"] = { "Resource/Models/Main/inferno.m3d" };
+        paths["Resource/Models/Main/filth_navigator.l3d"] = { "Resource/Models/Main/catcher.l3d" };
+        paths["Resource/Models/Main/filth_navigator.m3d"] = { "Resource/Models/Main/catcher.m3d" };
 
-    //Map infected vice
-    paths["Resource/Models/Main/Frame_Imperia_Vice.l3d"] = "Resource/Models/Main/Frame_Imperia_Vice_infected.l3d";
-    paths["Resource/Models/Main/Frame_Imperia_Vice.m3d"] = "Resource/Models/Main/Frame_Imperia_Vice_infected.m3d";
-
-    //Load certain models
-    std::vector<std::string> models = {
-        "build_electro_st", "build_electro_st",
-        "electro_gun", "electro_gun",
-        "eflair", "impaler", "conductor"
-    };
-    if (terGameContentSelect == PERIMETER_ET) {
-        models.emplace_back("build_harkbackers_st");
-        models.emplace_back("build_filth_navigator");
-        models.emplace_back("harkbackers_st");
-        models.emplace_back("filth_navigator");
-    }
-    for (const std::string& name : models) {
-        paths["Resource/Models/Main/" + name + ".l3d"] = "";
-        paths["Resource/Models/Main/" + name + ".m3d"] = "";
+        //Map infected vice
+        paths["Resource/Models/Main/Frame_Imperia_Vice.l3d"] = { "Resource/Models/Main/Frame_Imperia_Vice_infected.l3d" };
+        paths["Resource/Models/Main/Frame_Imperia_Vice.m3d"] = { "Resource/Models/Main/Frame_Imperia_Vice_infected.m3d" };
+        
+        //Override these models for missions too
+        if (terGameContentSelect == PERIMETER_ET) {
+            paths["Resource/Models/Main/build_harkbackers_st.l3d"].emplace_back("");
+            paths["Resource/Models/Main/build_harkbackers_st.m3d"].emplace_back("");
+            paths["Resource/Models/Main/build_filth_navigator.l3d"].emplace_back("");
+            paths["Resource/Models/Main/build_filth_navigator.m3d"].emplace_back("");
+            paths["Resource/Models/Main/harkbackers_st.l3d"].emplace_back("");
+            paths["Resource/Models/Main/harkbackers_st.m3d"].emplace_back("");
+            paths["Resource/Models/Main/filth_navigator.l3d"].emplace_back("");
+            paths["Resource/Models/Main/filth_navigator.m3d"].emplace_back("");
+            paths["Resource/Models/Main/Frame_Imperia_Vice.l3d"].emplace_back("");
+            paths["Resource/Models/Main/Frame_Imperia_Vice.m3d"].emplace_back("");
+        }
+    } else {
+        //This is a reworked ET
+        paths["Resource/Models"] = {};
     }
 
     //Load texts, first try current lang, then english, then russian
-    std::string locpath = getLocDataPath();
+    const std::string& locale = getLocale();
+    const std::string& locpath = getLocDataPath();
     std::vector<std::string> lang_paths;
     lang_paths.emplace_back(locpath);
     lang_paths.emplace_back("Resource/LocData/English/");
     lang_paths.emplace_back("Resource/LocData/Russian/");
     for (std::string& path : lang_paths) {
-        std::string texts_path = path + "Text/Texts.btdb";
-        if (!convert_path_content(addonDir + texts_path).empty()) {
-            //Override texts if game content selection is ET only
-            if (terGameContentSelect == PERIMETER_ET) {
-                paths[texts_path] = locpath + "Text/Texts_ET.btdb";
-                //paths[path + "Fonts"] = locpath;
-                paths[path + "Voice"] = locpath + "Voice/";
+        if (get_content_entry(mod.path + PATH_SEP + path)) {
+            if (legacy) {
+                std::string texts_path = path + "Text/Texts.btdb";
+                //Override texts if game content selection is ET only
+                if (terGameContentSelect == PERIMETER_ET) {
+                    paths[texts_path] = {locpath + "Text/Texts_PerimeterET.btdb"};
+                } else {
+                    paths[texts_path] = {locpath + "Text/Texts_PerimeterET_noreplace.btdb"};
+                }
             } else {
-                paths[texts_path] = locpath + "Text/Texts_ET_noreplace.btdb";
+                std::string texts_path = "Text/Texts_PerimeterET_" + locale;
+                //Override texts if game content selection is ET only
+                if (terGameContentSelect == PERIMETER_ET) {
+                    paths[path + texts_path + ".txt"] = {};
+                } else {
+                    paths[path + texts_path + ".txt"] = {locpath + texts_path + "_noreplace.txt"};
+                }
+            }
+
+            //Override voices from ET
+            if (terGameContentSelect == PERIMETER_ET) {
+                paths[path + "Voice"] = {locpath + "Voice"};
             }
             printf("Addon ET: Using locale at %s\n", path.c_str());
             break;
@@ -348,36 +431,54 @@ void loadAddonET(const std::string& addonName, const std::string& addonDir) {
 
     if (terGameContentSelect == PERIMETER_ET) {
         //Load mission required data and other ET stuff
-        paths["Resource/scenario.hst"] = "";
-        paths["Resource/Icons"] = "";
-        paths["Resource/Missions"] = "";
-        paths["Resource/Music"] = "";
-        paths["Resource/Video"] = "";
-        paths["Scripts/Triggers"] = "";
-        paths["Scripts"] = "";
+        std::string path_scenario = "Resource/scenario.hst";
+        if (!legacy && startsWith(locale, "russian")) {
+            path_scenario = "Resource/scenario_russian.hst";
+        }
+        paths[path_scenario] = {
+            "Resource/scenario.hst",
+            //In case scenario_LOCALE.hst exists in base
+            "Resource/scenario_" + locale + ".hst"
+        };
+        paths["Resource/Icons"] = {};
+        paths["Resource/Missions"] = {};
+        paths["Resource/Music"] = {};
+        paths["Resource/Video"] = {};
+        paths["Scripts"] = {};
     } else {
-        //Add AI scripts for battle so it uses electro units, also ETs map may require ET scripts
-        paths["scripts/triggers/battle.scr"] = "";
-        paths["scripts/triggers/battle1.scr"] = "";
-        paths["scripts/triggers/survival.scr"] = "";
-        paths["scripts/triggers/survival1.scr"] = "";
         for (int i = 1; i <= 12; ++i) {
-            paths["scripts/triggers/mp-" + std::to_string(i) + ".scr"] = "";
+            //Copy scripts in case maps need them
+            paths["scripts/triggers/mp-" + std::to_string(i) + ".scr"] = {};
         }
 
-        //Try to use ET interface so we can have icons at least
-        paths["Resource/Icons/intf"] = "";
+        if (legacy) {
+            //On GW the survival1 doesn't seem to have much, ET maps use mostly the survival1 so we override it
+            paths["scripts/triggers/survival1.scr"] = {};
+            
+            //Try to use ET interface so we can have icons at least, non legacy the base game has the icons already
+            paths["Resource/Icons/intf"] = {};
+        }
     }
 
     //Map the ET resource paths into game
+    std::string modPath = mod.path + PATH_SEP;
     for (const auto& entry : paths) {
-        const std::string& destination = entry.second.empty() ? entry.first : entry.second;
-        mapContentPath(addonDir + entry.first, destination);
+        if (entry.second.empty()) {
+            mapContentPath(modPath + entry.first, entry.first);
+        } else {
+            for (const auto& path : entry.second) {
+                const std::string& destination = path.empty() ? entry.first : path;
+                mapContentPath(modPath + entry.first, destination);
+            }
+        }
     }
 
-    if (terGameContentSelect != PERIMETER_ET) {
+    if (terGameContentSelect == PERIMETER_ET) {
+        //Only load localized resources if set as active
+        loadLocalizedResources(modPath);
+    } else {
         //Map music manually to avoid copying main menu music
-        for (filesystem_entry* entry : get_content_entries_directory(addonDir + "Resource/Music")) {
+        for (filesystem_entry* entry : get_content_entries_directory(modPath + "Resource/Music")) {
             if (endsWith(entry->key, "perimeter_main.ogg")) {
                 continue;
             }
@@ -386,16 +487,21 @@ void loadAddonET(const std::string& addonName, const std::string& addonDir) {
         }
     }
 
+    //Legacy workarounds
+    if (legacy) {
+        workaroundET();
+    }
+
     //Set flag that we have ET content
     addGameContent(GAME_CONTENT::PERIMETER_ET);
 }
 
 ///Load addon contents into root of virtual resources
-void loadAddon(const std::string& addonName, const std::string& addonDir) {
-    printf("Loading mod: %s\n", addonName.c_str());
+void loadMod(const ModMetadata& mod) {
+    printf("Loading mod: %s\n", mod.mod_name.c_str());
     
     //Skip certain resource dirs such as saves and replays
-    for (const auto& entry : get_content_entries_directory(addonDir + "Resource")) {
+    for (const auto& entry : get_content_entries_directory(mod.path + "/Resource")) {
         std::filesystem::path entry_path = std::filesystem::u8path(entry->key);
         std::string entry_name = entry_path.filename().u8string();
         std::string destination = std::string("Resource") + PATH_SEP + entry_name;
@@ -404,66 +510,58 @@ void loadAddon(const std::string& addonName, const std::string& addonDir) {
         if (entry_name == "saves" || entry_name == "replay") continue;
 
         //Load content from entry to destination
-        scan_resource_paths(
-                destination,
-                entry->path_content
-        );
+        mapContentPath(entry->path_content, destination);
     }
 
+    loadLocalizedResources(mod.path + PATH_SEP);
+
     //Load scripts
-    if (get_content_entry(addonDir + "Scripts") != nullptr) {
-        scan_resource_paths("Scripts", addonDir + "Scripts");
+    if (get_content_entry(mod.path + PATH_SEP + "Scripts") != nullptr) {
+        mapContentPath(mod.path + PATH_SEP + "Scripts", "Scripts");
     }
 }
 
 ///Common addon loading code
-void loadAddonCommon(const std::string& addonName, const std::string& addonDir) {
-    if (!convert_path_content(addonDir + "Resource/Missions/01x4.spg").empty()) {
-        loadAddonET(addonName, addonDir);
+void loadModCommon(ModMetadata& mod) {
+    mod.campaign = get_content_entry(mod.path + "/Resource/Missions") != nullptr; 
+    if (isContentET(mod.path + PATH_SEP)) {
+        loadAddonET(mod);
     } else {
-        loadAddon(addonName, addonDir);
+        loadMod(mod);
     }
 
-    std::string mapping = convert_path_content(addonDir + "content_mapping.txt");
+    std::string mapping = convert_path_content(mod.path + "/content_mapping.txt");
     if (!mapping.empty()) {
         loadMappings(mapping);
     }
 
-    printf("Loaded mod: %s\n", addonName.c_str());
+    printf("Loaded mod: %s\n", mod.mod_name.c_str());
 }
 
 void applyWorkarounds() {
-    std::map<std::string, std::string> paths;
-    std::string locpath = getLocDataPath();
-
-    if (terGameContentAvailable & GAME_CONTENT::PERIMETER_ET) {
-        for (auto faction : { BELLIGERENT_FACTION::EXODUS, BELLIGERENT_FACTION::EMPIRE, BELLIGERENT_FACTION::HARKBACK }) {
-            std::string factionpath = locpath + "Voice/" + getBelligerentFactionName(faction);
-            
-            //These audios are missing for harkback since ET doesn't have this faction
-            //On english version these audios have "Gun 
-            paths[factionpath + "_Voice_Building_Ready.wav"] = factionpath + "_Voice_ElectroGun_Ready.wav";
-            paths[factionpath + "_Voice_Building_Destroyed.wav"] = factionpath + "_Voice_ElectroGun_Destroyed.wav";
-        }
-    }
-
-    //Map the resource paths
-    for (const auto& entry : paths) {
-        mapContentPath(entry.first, entry.second);
+    if (terGameContentBase == GAME_CONTENT::PERIMETER_ET) {
+        workaroundET();
     }
 }
+
+struct SortModMetadatas {
+    inline bool operator ()(const ModMetadata& s1,const ModMetadata& s2) {
+        return s1.mod_name < s2.mod_name;
+    }
+};
 
 void detectGameContent() {
     //We may need to do some cleanup
     clear_content_entries();
     terGameContentAvailable = terGameContentBase = terGameContentSelect = GAME_CONTENT::CONTENT_NONE;
+    gameMods.clear();
     
     content_debug_flag = check_command_line("content_debug") != nullptr;
     
     findGameContent();
 
     //Do available content identification, leave Perimeter last just in case someone mixed both folders into one
-    if (!convert_path_content("Resource/Missions/01x4.spg").empty()) {
+    if (isContentET("")) {
         addGameContent(GAME_CONTENT::PERIMETER_ET);
         terGameContentBase = GAME_CONTENT::PERIMETER_ET;
     }
@@ -480,50 +578,194 @@ void detectGameContent() {
     //Check if we should select another content, this has to be done before loading addons
     const char* content_selection = check_command_line("content_select");
     if (content_selection) {
-        for (auto const& selected : getGameContentFromEnumName(content_selection)) {
-            terGameContentSelect = static_cast<GAME_CONTENT>(terGameContentSelect | selected);
-        }
+        terGameContentSelect = mergeGameContentEnums(getGameContentFromEnumName(content_selection));
     }
 
     //Store current game content type and the path in its settings
     IniManager* ini = getSettings();
     ini->put("Global", "LastContent", getGameContentEnumName(terGameContentBase).c_str());
     putStringSettings("GameContent", get_content_root_path_str());
+
+    //Map localized resources, we do this before addons loading
+    loadLocalizedResources();
         
-    //Detect if we have extra contents
-    int loadAddons = 1;
-    check_command_line_parameter("mods", loadAddons);
-    std::vector<std::string> addons;
-    if (loadAddons) {
-        for (const auto& entry: get_content_entries_directory("mods")) {
-            if (entry->is_directory) {
-                std::filesystem::path entry_path = std::filesystem::u8path(entry->path_content);
-                std::string addonName = entry_path.filename().u8string();
-                if (endsWith(addonName, ".off")) {
-                    printf("Skipping disabled mod: %s\n", addonName.c_str());
-                    continue;
+    //Detect if we have extra contents/mods
+    const size_t DESC_BUF_LEN = 10240;
+    static char desc_buf[DESC_BUF_LEN];
+    int loadMods = 1;
+    check_command_line_parameter("mods", loadMods);
+    std::vector<ModMetadata> foundMods;
+    const std::string& locale = getLocale();
+    for (const auto& entry: get_content_entries_directory("mods")) {
+        if (entry->is_directory) {
+            std::filesystem::path entry_path = std::filesystem::u8path(entry->path_content);
+            
+            ModMetadata data = {};
+            data.available = false;
+            data.enabled = false;
+            data.path = entry_path.u8string();
+            data.mod_name = entry_path.filename().u8string();
+
+            bool is_content_ET = isContentET(data.path + PATH_SEP);
+            std::string path_ini = convert_path_content(data.path + PATH_SEP + "mod.ini");
+            if (!path_ini.empty()) {
+                //Load mandatory .ini fields
+                IniManager mod_ini = IniManager(path_ini.c_str(), true);
+                data.available = true;
+                data.mod_name = mod_ini.get("Mod", "name");
+                data.mod_version = mod_ini.get("Mod", "version");
+                if (data.mod_name.empty()) {
+                    data.available = false;
+                    fprintf(stderr, "Missing name in Mod section at %s, not loading\n", path_ini.c_str());
+                    data.errors.emplace_back("TEXT=Interface.Menu.Mods.ErrorMissingAttribute");
+                    data.errors.emplace_back("[Mod] name");
+                } else if (data.mod_version.empty()) {
+                    data.available = false;
+                    fprintf(stderr, "Missing version in Mod section at %s, not loading\n", path_ini.c_str());
+                    data.errors.emplace_back("TEXT=Interface.Menu.Mods.ErrorMissingAttribute");
+                    data.errors.emplace_back("[Mod] version");
                 }
-                addons.emplace_back(addonName);
+
+                //Load optional fields
+                mod_ini.check_existence = false;
+                //Try loading in current locale, then description, then english
+                if (ReadIniString("Mod", ("description_" + locale).c_str(), nullptr, desc_buf, DESC_BUF_LEN, path_ini) && *desc_buf) {
+                    data.mod_description = convertToCodepage(desc_buf, locale);
+                } else if ((ReadIniString("Mod", "description", nullptr, desc_buf, DESC_BUF_LEN, path_ini) && *desc_buf)
+                || (locale != "english" && ReadIniString("Mod", "description_english", nullptr, desc_buf, DESC_BUF_LEN, path_ini) && *desc_buf)) {
+                    data.mod_description = convertToCodepage(desc_buf, "english");
+                }
+                if (!data.mod_description.empty()) {
+                    string_replace_all(data.mod_description, "\\r", "");
+                    string_replace_all(data.mod_description, "\\n", "\n");
+                    string_replace_all(data.mod_description, "\\\\", "\\");
+                }
+                data.mod_authors = mod_ini.get("Mod", "authors");
+                data.mod_license = mod_ini.get("Mod", "license");
+                data.mod_url = mod_ini.get("Mod", "url");
+                
+                //Check version
+                data.content_game_minimum_version = mod_ini.get("Content", "game_minimum_version");
+                if (data.available && !data.content_game_minimum_version.empty()) {
+                    int diff = compare_versions(currentVersionNumbers, data.content_game_minimum_version.c_str());
+                    if (0 < diff) {
+                        fprintf(stderr, "Minimum game version '%s' requirement not satisfied for %s, not loading\n",
+                                data.content_game_minimum_version.c_str(), data.path.c_str());
+                        data.errors.emplace_back("TEXT=Interface.Menu.Mods.ErrorGameTooOld");
+                        data.errors.emplace_back(data.content_game_minimum_version);
+                        data.available = false;
+                    }
+                }
+
+                //Check content requirements
+                data.content_required_content = mod_ini.get("Content", "required_content");
+                data.content_disallowed_content = mod_ini.get("Content", "disallowed_content");
+
+                //Load mod config .ini fields
+                data.enabled = true;
+                std::string path_config_ini = data.path + PATH_SEP + "mod_config.ini";
+                if (get_content_entry(path_config_ini)) {
+                    IniManager mod_config_ini = IniManager(path_config_ini.c_str(), false);
+                    const char* mod_enabled_chr = mod_config_ini.get("Mod", "enabled");
+                    if (*mod_enabled_chr) {
+                        std::string mod_enabled = string_to_lower(mod_enabled_chr);
+                        data.enabled = mod_enabled != "0" && mod_enabled != "false";
+                    }
+                }
+            } else if (is_content_ET) {
+                //Provide adhoc mod info for legacy ET folder
+                bool isRussian = startsWith(locale, "russian");
+                data.available = true;
+                data.enabled = true;
+                data.mod_name = "Perimeter: Emperor's Testament";
+                data.mod_version = "2.0.0";
+                data.mod_description = isRussian ? "Периметр: Завет Императора" : "Perimeter: Emperor's Testament";
+                data.mod_authors = "K-D LAB";
+                data.mod_url = "https://kdlab.com";
+            } else {
+                fprintf(stderr, "Mod folder %s has missing info file mod.ini, not loading\n", data.path.c_str());
+                data.errors.emplace_back("TEXT=Interface.Menu.Mods.ErrorMissingModInfo");
+            }
+            
+            //Force disable all mods
+            if (!loadMods) {
+                data.available = false;
+            }
+
+            //Avoid possible duplicates of ET
+            if (data.available && is_content_ET && (terGameContentAvailable & PERIMETER_ET)) {
+                fprintf(stderr, "ET is already loaded when loading ET content at %s, not loading\n", data.path.c_str());
+                data.errors.emplace_back("TEXT=Interface.Menu.Mods.ErrorDuplicateContent");
+                data.available = false;
+            }
+            
+            //Mark as enabled if available and not named with .off at end
+            data.enabled &= data.available && !endsWith(entry_path.filename().u8string(), ".off");
+            
+            //If is ET then load now so the rest of mods can act on content properly
+            if (data.enabled && is_content_ET) {
+                gameMods[data.mod_name] = data;
+                loadModCommon(data);
+            } else {
+                foundMods.emplace_back(data);
             }
         }
     }
-    
-    //Sort it
-    std::sort(addons.begin(), addons.end());
 
-    //Load addons
-    for (std::string& addonName : addons) {
-        std::string addonDir = std::string("mods") + PATH_SEP + addonName + PATH_SEP;
-        loadAddonCommon(addonName, addonDir);
-    }
-    
-    //Do some workarounds
-    applyWorkarounds();
-    
     //Ensure selected content is actually present
     if (terGameContentSelect == GAME_CONTENT::CONTENT_NONE || (terGameContentSelect & terGameContentAvailable) != terGameContentSelect) {
         terGameContentSelect = terGameContentAvailable;
     }
+    
+    //Sort it
+    std::sort(foundMods.begin(), foundMods.end(), SortModMetadatas());
+
+    //Load mods
+    for (ModMetadata& mod : foundMods) {
+        if (0 < gameMods.count(mod.mod_name)) {
+            fprintf(stderr, "Mod %s at %s was already loaded, not loading\n", mod.mod_name.c_str(), mod.path.c_str());
+            continue;
+        }
+        
+        if (mod.enabled && !mod.content_required_content.empty()) {
+            GAME_CONTENT required = mergeGameContentEnums(getGameContentFromEnumName(mod.content_required_content));
+            if (!getMissingGameContent(terGameContentSelect, required).empty()) {
+                if (!getMissingGameContent(terGameContentAvailable, required).empty()) {
+                    fprintf(stderr, "Game content '%s' not installed which is a requirement for %s, not loading\n",
+                            mod.content_required_content.c_str(), mod.path.c_str());
+                    mod.errors.emplace_back("TEXT=Interface.Menu.Mods.ErrorRequiredContentMissing");
+                    mod.errors.emplace_back(mod.content_required_content);
+                } else {
+                    fprintf(stderr, "Game content '%s' installed but not enabled which is a requirement for %s, not loading\n",
+                            mod.content_required_content.c_str(), mod.path.c_str());
+                    mod.errors.emplace_back("TEXT=Interface.Menu.Mods.ErrorRequiredContentDisabled");
+                    mod.errors.emplace_back(mod.content_required_content);
+                }
+                mod.available = mod.enabled = false;
+            }
+        }
+        if (mod.enabled && !mod.content_disallowed_content.empty()) {
+            GAME_CONTENT disallowed = mergeGameContentEnums(getGameContentFromEnumName(mod.content_disallowed_content));
+            if (terGameContentSelect == disallowed) {
+                fprintf(stderr, "Game content '%s' is enabled which is not compatible for %s, not loading\n",
+                        mod.content_disallowed_content.c_str(), mod.path.c_str());
+                mod.errors.emplace_back("TEXT=Interface.Menu.Mods.ErrorDisallowedContentEnabled");
+                mod.errors.emplace_back(mod.content_disallowed_content);
+                mod.available = mod.enabled = false;
+            }
+        }
+        
+        mod.enabled &= mod.available;
+        
+        gameMods[mod.mod_name] = mod;
+        if (!mod.enabled) {
+            continue;
+        }
+        loadModCommon(mod);
+    }
+    
+    //Do some workarounds
+    applyWorkarounds();
     
     //Since Perimeter has tutorial, we need to set first mission as 1 (second) so the briefing is skipped
     if (terGameContentSelect & GAME_CONTENT::PERIMETER) {
@@ -553,6 +795,17 @@ bool unavailableContentUnitAttribute(terUnitAttributeID id, GAME_CONTENT content
         case UNIT_ATTRIBUTE_EFLAIR:
         case UNIT_ATTRIBUTE_IMPALER:
         case UNIT_ATTRIBUTE_CONDUCTOR:
+        case UNIT_ATTRIBUTE_FILTH_A_ANTS:
+        case UNIT_ATTRIBUTE_FILTH_A_CROW:
+        case UNIT_ATTRIBUTE_FILTH_A_DAEMON:
+        case UNIT_ATTRIBUTE_FILTH_A_DRAGON_HEAD:
+        case UNIT_ATTRIBUTE_FILTH_A_DRAGON_BODY:
+        case UNIT_ATTRIBUTE_FILTH_A_DRAGON_TAIL:
+        case UNIT_ATTRIBUTE_FILTH_A_EYE:
+        case UNIT_ATTRIBUTE_FILTH_A_RAT:
+        case UNIT_ATTRIBUTE_FILTH_A_SPIDER:
+        case UNIT_ATTRIBUTE_FILTH_A_WASP:
+        case UNIT_ATTRIBUTE_FILTH_A_WORM:
             return !(content & GAME_CONTENT::PERIMETER_ET);
         default:
             return false;
@@ -585,13 +838,21 @@ bool unavailableContentBelligerent(terBelligerent belligerent, GAME_CONTENT cont
 std::vector<GAME_CONTENT> getGameContentEnums(const uint32_t& content) {
     std::vector<GAME_CONTENT> contentList;
     if (content) {
-        contentList = getEnumDescriptor(GAME_CONTENT()).keyCombination(content);
+        contentList = getEnumDescriptor(GAME_CONTENT())->keyCombination(content);
     }
     return contentList;
 }
 
+GAME_CONTENT mergeGameContentEnums(const std::vector<GAME_CONTENT>& list) {
+    GAME_CONTENT out = CONTENT_NONE;
+    for (auto const& c : list) {
+        out = static_cast<GAME_CONTENT>(out | c);
+    }
+    return out;
+}
+
 std::vector<GAME_CONTENT> getGameContentFromEnumName(const std::string& content) {
-    return getEnumDescriptor(GAME_CONTENT()).keysFromNameCombination(content);
+    return getEnumDescriptor(GAME_CONTENT())->keysFromNameCombination(content);
 }
 
 std::vector<GAME_CONTENT> getMissingGameContent(const GAME_CONTENT& content, const GAME_CONTENT& required) {

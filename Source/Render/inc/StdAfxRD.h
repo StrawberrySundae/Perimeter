@@ -1,32 +1,28 @@
 #include "tweaks.h"
 
-#include <string.h>
-#include <stdio.h>
-#include <stdlib.h>
-
+#include <cinttypes>
+#include <cstring>
+#include <cstdio>
+#include <cstdlib>
 #include <algorithm>
 #include <string>
 #include <vector>
 #include <list>
 #include <stack>
 #include <map>
+#include <unordered_set>
+#include <unordered_map>
 
 #if (!defined(_FINAL_VERSION_) || defined(_DEBUG)) && !defined(NASSERT)
 #include <iostream>
 #endif
 
-#ifdef PERIMETER_D3D9
-#include <d3d9.h>
-#include <d3dx9.h>
-#endif
+#include "../inc/RenderTypes.h"
 
 #include "../inc/Umath.h"
 #include "../../PluginMAX/Src/BaseClass.h"
 #include "../inc/IVisGenericInternal.h"
 #include "IRenderDevice.h"
-#ifdef PERIMETER_D3D9
-#include "RenderDevice.h"
-#endif
 #include "../src/VisError.h"
 #include "../inc/VisGenericDefine.h"
 #include "../inc/RenderMT.h"
@@ -85,7 +81,6 @@ extern DebugType<float>	Option_MapLevel;
 extern DebugType<int>	Option_ShowRenderTextureDBG;
 extern DebugType<int>	Option_DebugShowShadowVolume;
 extern DebugType<int>	Option_ShadowType;
-extern DebugType<int>	Option_FavoriteLoadDDS;
 extern DebugType<int>	Option_EnableBump;
 extern DebugType<int>	Option_EnableLinkEffectToModel;
 extern DebugType<int>	Option_EnableOcclusion;
@@ -105,10 +100,6 @@ extern class cVisGeneric		*gb_VisGeneric;
 
 #ifdef _DEBUG
 //#define TEXTURE_NOTFREE
-#endif
-
-#ifdef PERIMETER_D3D9
-#include "D3DRender.h"
 #endif
 
 int ResourceFileRead(const char *fname,char *&buf,int &size);

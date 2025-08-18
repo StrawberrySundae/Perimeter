@@ -407,7 +407,7 @@ cLogicObject* cLogicGeneric::GetElement(const char *pFName)
 					case NODEOBJECT_MESH:
 						{ // импорт 3d-объекта
 							sObjectMesh *ObjectMesh=(sObjectMesh*)NodeObject;
-							char *LogicName=TestFirstName(NodeObject->name.c_str(),"logic ");
+							const char *LogicName=TestFirstName(NodeObject->name.c_str(),"logic ");
 							cLogicMesh *LogicTile=(cLogicMesh*)LogicObj->FindObject(LogicName);
 							bool first=false;
 							if(LogicTile==0) 
@@ -419,7 +419,7 @@ cLogicObject* cLogicGeneric::GetElement(const char *pFName)
 								LogicTile->AnimChannel->NewChannel(MeshScene.ChannelLibrary.length());
 								if(!NodeObject->parent.empty())
 								{
-									char* parent_name=TestFirstName(NodeObject->parent.c_str(),"logic ");
+									const char* parent_name=TestFirstName(NodeObject->parent.c_str(),"logic ");
 									LogicTile->Parent=LogicObj->FindObject(parent_name);
 								}
 
@@ -434,7 +434,7 @@ cLogicObject* cLogicGeneric::GetElement(const char *pFName)
 					case NODEOBJECT_HELPER:
 						{ // импорт вспомогательного-объекта
 							sHelperObject *HelperObject=(sHelperObject*)NodeObject;
-							char *LogicName=TestFirstName(NodeObject->name.c_str(),"logic ");
+							const char *LogicName=TestFirstName(NodeObject->name.c_str(),"logic ");
 							VISASSERT(LogicName && "Uncorrect l3d model");
 							cLogicConnect *LogicTile=(cLogicConnect*)LogicObj->FindObject(LogicName);
 							if(LogicTile==0) 
@@ -480,10 +480,8 @@ cLogicObject::cLogicObject(const char *fname_):cIUnkObjScale(KIND_LOGIC_OBJ)
 }
 cLogicObject::~cLogicObject()
 {
-	vtiles::iterator it;
-	FOR_EACH(tiles,it)
-	{
-		delete *it;
+	for (auto& tile : tiles) {
+		tile->Release();
 	}
 }
 void cLogicObject::SetScale(const Vect3f& scale)

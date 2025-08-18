@@ -1,4 +1,6 @@
 #include "StdAfx.h"
+#include "EditArchive.h"
+#include "BinaryArchive.h"
 #include "XPrmArchive.h"
 #include "Save.h"
 
@@ -562,7 +564,6 @@ END_ENUM_DESCRIPTOR(WeaponFlags)
 BEGIN_ENUM_DESCRIPTOR(GAME_CONTENT, "GAME_CONTENT")
 REGISTER_ENUM(PERIMETER, "PERIMETER")
 REGISTER_ENUM(PERIMETER_ET, "PERIMETER_ET")
-REGISTER_ENUM(PERIMETER_HD, "PERIMETER_HD")
 END_ENUM_DESCRIPTOR(GAME_CONTENT)
 
 /////////////////////////////////////////////////////

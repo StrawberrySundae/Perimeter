@@ -1,11 +1,11 @@
 #include "StdAfx.h"
 #include "GameShellSq.h"
 #include "qd_textdb.h"
-#include "BelligerentSelect.h"
 #include "GameShell.h"
 #include "MainMenu.h"
 #include "PerimeterShellUI.h"
 #include "GameContent.h"
+#include "BelligerentSelect.h"
 
 extern std::string getItemTextFromBase(const char *keyStr);
 
@@ -82,6 +82,21 @@ BELLIGERENT_FACTION getBelligerentFaction(terBelligerent belligerent) {
             break;
     }
     return FACTION_NONE;
+}
+
+void setBelligerentFactionSound(BELLIGERENT_FACTION faction) {
+    switch(faction){
+        default:
+        case EXODUS:
+            SNDSetBelligerentIndex(0);
+            break;
+        case HARKBACK:
+            SNDSetBelligerentIndex(1);
+            break;
+        case EMPIRE:
+            SNDSetBelligerentIndex(2);
+            break;
+    }
 }
 
 std::string getBelligerentFactionName(BELLIGERENT_FACTION faction) {

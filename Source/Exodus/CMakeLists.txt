@@ -1,21 +1,12 @@
 
-INCLUDE_DIRECTORIES(
-        BEFORE .
-        "${PROJECT_SOURCE_DIR}/Source/XTool"
-)
-
-SET(Exodus_SRCS
+add_library(Exodus STATIC
         exodus.cpp
         ${pevents_SOURCE_DIR}/src/pevents.cpp
 )
 
-ADD_LIBRARY(Exodus STATIC ${Exodus_SRCS})
-target_compile_options(Exodus PUBLIC ${PERIMETER_COMPILE_OPTIONS})
-
-SET(ExodusD3D9_SRCS
-        d3dx9.cpp
-        d3dx9math.cpp
+target_include_directories(Exodus PRIVATE
+        .
+        "${PROJECT_SOURCE_DIR}/Source/XTool"
 )
 
-ADD_LIBRARY(ExodusD3D9 STATIC ${ExodusD3D9_SRCS})
-target_compile_options(ExodusD3D9 PUBLIC ${PERIMETER_COMPILE_OPTIONS})
+target_compile_options(Exodus PRIVATE ${PERIMETER_COMPILE_OPTIONS})

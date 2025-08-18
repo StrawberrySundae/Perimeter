@@ -15,6 +15,8 @@
 #include "GameShell.h"
 #include "CameraManager.h"
 
+#include "Sample.h"
+#include "AudioPlayer.h"
 #include "PerimeterShellUI.h"
 #include "MissionEdit.h"
 #include "HotKey.h"
@@ -23,12 +25,19 @@
 #include "GenericFilth.h"
 #include "IronPort.h"
 #include "qd_textdb.h"
-#include <stdarg.h>     // for va_start
+#include <cstdarg>     // for va_start
 #include "GameContent.h"
 #include "Localization.h"
 #include "MainMenu.h"
 #include "HistoryScene.h"
 #include "BelligerentSelect.h"
+
+#include "ANIFile.h"
+#include "files/files.h"
+
+namespace scripts_export {
+#include "Scripts/InterfaceScriptExport.hi"
+}
 
 extern UnitInterfacePrm interface_squad1_prm;
 extern UnitInterfacePrm interface_squad3_prm;
@@ -42,7 +51,6 @@ extern MusicPlayer gb_Music;
 
 extern bool  bNoUnitAction;
 extern bool  bNoTracking;
-extern int _nActiveClusterNum;
 
 extern cFont* hFontMainmenu1;
 extern cFont* hFontMainmenu2;
@@ -75,7 +83,7 @@ _handlertbl[] = {
 	//start menu
 	{SQSH_MM_SINGLE_BTN, onMMSingleButton},
     {SQSH_MM_MULTIPLAYER_BTN, onMMMultiplayerButton},
-    {SQSH_MM_ADDONS_BTN, onMMAddonsButton},
+    {SQSH_MM_COMMUNITY_BTN, onMMCommunityButton},
 	{SQSH_MM_OPTIONS_BTN, onMMOptionsButton},
 	{SQSH_MM_CREDITS_BTN, onMMCreditsButton},
     {SQSH_MM_QUIT_BTN, onMMQuitButton},
@@ -99,7 +107,32 @@ _handlertbl[] = {
     {SQSH_MM_ADDONS_LIST, onMMAddonsList},
     {SQSH_MM_ADDONS_APPLY_BTN, onMMAddonsApplyButton},
     {SQSH_MM_ADDONS_ENABLE_COMBO, onMMAddonsEnableCombo},
+    {SQSH_MM_ADDONS_GUIDE_BTN, onMMOpenLinkButton},
     {SQSH_MM_BACK_FROM_ADDONS_BTN, onMMAddonsBackButton},
+    
+    //community menu
+    {SQSH_MM_COMMUNITY_1_BTN, onMMOpenLinkButton},
+    {SQSH_MM_COMMUNITY_2_BTN, onMMOpenLinkButton},
+    {SQSH_MM_COMMUNITY_3_BTN, onMMOpenLinkButton},
+    {SQSH_MM_COMMUNITY_4_BTN, onMMOpenLinkButton},
+    {SQSH_MM_ADDONS_BTN, onMMAddonsButton},
+    {SQSH_MM_BACK_FROM_COMMUNITY_BTN, onMMBackButton},
+
+    //main menu control editor
+    {SQSH_MM_CONTROL_EDITOR_BTN, onMMControlEditorButton},
+    {SQSH_MM_CONTROL_EDITOR_LIST, onMMControlEditorList},
+    {SQSH_MM_CONTROL_EDITOR_CHANGE_BTN, onMMControlEditorChange},
+    {SQSH_MM_CONTROL_EDITOR_RESTORE_BTN, onMMControlEditorRestore},
+    {SQSH_MM_CONTROL_EDITOR_DELETE_BTN, onMMControlEditorDelete},
+    {SQSH_MM_BACK_FROM_CONTROL_EDITOR_BTN, onMMBackButton},
+
+    //ingame menu control editor
+    {SQSH_MM_CONTROL_EDITOR_INGAME_BTN, onMMControlEditorButton},
+    {SQSH_MM_CONTROL_EDITOR_INGAME_LIST, onMMControlEditorList},
+    {SQSH_MM_CONTROL_EDITOR_INGAME_CHANGE_BTN, onMMControlEditorChange},
+    {SQSH_MM_CONTROL_EDITOR_INGAME_RESTORE_BTN, onMMControlEditorRestore},
+    {SQSH_MM_CONTROL_EDITOR_INGAME_DELETE_BTN, onMMControlEditorDelete},
+    {SQSH_MM_BACK_FROM_CONTROL_EDITOR_INGAME_BTN, onMMBackButton},
 
 	//profile editor
 	{SQSH_MM_NEW_PROFILE_BTN, onMMNewProfileButton},
@@ -122,7 +155,8 @@ _handlertbl[] = {
 	{SQSH_MM_START_MISSION_BTN, onMMStartMissionButton},
 	{SQSH_MM_SKIP_MISSION_BTN, onMMSkipMissionButton},
 	{SQSH_MM_SKIP_BRIEFING_BTN, onMMSkipBriefingButton},
-	{SQSH_MM_BRIEFING_YEAR_TXT, onMMYearBriefing},
+    {SQSH_MM_BRIEFING_TXT, onMMBriefingText},
+    {SQSH_MM_BRIEFING_YEAR_TXT, onMMYearBriefing},
 	
 	//end mission
 	{SQSH_MM_RESUME_BTN, onMMResumeButton},
@@ -143,15 +177,16 @@ _handlertbl[] = {
 	{SQSH_MM_INMISSION_LOAD_BTN, onMMInMissLoadButton},
 	{SQSH_MM_INMISSION_OPTIONS_BTN, onMMInMissOptionsButton},
 	{SQSH_MM_INMISSION_RESTART_BTN, onMMInMissRestartButton},
-	{SQSH_MM_INMISSION_RESUME_BTN, onMMInMissResumeButton},
+	{SQSH_MM_INMISSION_RESUME_BTN, onMMBackButton},
 	{SQSH_MM_INMISSION_QUIT_BTN, onMMInMissQuitButton},
 
 	//battle
 	{SQSH_MM_MAP_LIST, onMMMapList},
 
 	//credits
+    {SQSH_MM_CREDITS_COMMUNITY_BTN, onMMCommunityButton},
 	{SQSH_MM_BACK_CREDITS_BTN, onMMBackButton},
-
+    
 
 	{SQSH_MM_BATTLE_PLAYER1_FRM_BTN, onMMBattleFrmButton},
 	{SQSH_MM_BATTLE_PLAYER2_FRM_BTN, onMMBattleFrmButton},
@@ -218,9 +253,13 @@ _handlertbl[] = {
 
 	{SQSH_TASK_BUTTON_ID,                    onMMTaskButton},
 
-	//join game
+    //multiplayer join
     {SQSH_MM_MULTIPLAYER_JOIN_NEXT_BTN,      onMMMultiplayerJoinNextBtn},
     {SQSH_MM_BACK_FROM_MULTIPLAYER_JOIN_BTN, onMMBackButton},
+    
+    //multiplayer passwoprd
+    {SQSH_MM_MULTIPLAYER_PASSWORD_NEXT_BTN,      onMMMultiplayerPasswordNextBtn},
+    {SQSH_MM_BACK_FROM_MULTIPLAYER_PASSWORD_BTN, onMMBackButton},
 
     //multiplayer list
 	{SQSH_MM_MULTIPLAYER_LIST_GAME_LIST,     onMMMultiplayerListGameList},
@@ -295,13 +334,13 @@ _handlertbl[] = {
 	{SQSH_MM_GRAPHICS_SHADOWS_SAMPLES_COMBO, onSamplesCombo},
 	{SQSH_MM_GRAPHICS_BUMP_COMBO, onBumpCombo},
 	{SQSH_MM_GRAPHICS_BUMP_CHAOS_COMBO, onBumpChaosCombo},
-	{SQSH_MM_GRAPHICS_COMPRESS_COMBO, onCompressCombo},
 	{SQSH_MM_BACK_FROM_CUSTOM_BTN, onMMBackButton},
 
 	//sound
 	{SQSH_MM_BACK_FROM_SOUND_BTN, onMMBackButton},
 
 	//submit dialog
+    {SQSH_MM_SUBMIT_BACKGROUND, onMMSubmitDialogBackground},
 	{SQSH_MM_SUBMIT_YES_BTN, onMMSubmitYesButton},
 	{SQSH_MM_SUBMIT_NO_BTN, onMMSubmitNoButton},
 	{SQSH_MM_SUBMIT_OK_BTN, onMMSubmitYesButton},
@@ -317,19 +356,21 @@ _handlertbl[] = {
 	{SQSH_MM_OPTIONS_GRAPHICS,OnButtonOptionGraphics},
 	{SQSH_MM_OPTIONS_SOUND,OnButtonOptionSound},
 	{SQSH_MM_GRAPHICS_GAMMA_SLIDER, OnSliderGraphicsGamma},
-	{SQSH_MM_SOUND_MUSIC_COMBO,OnComboSoundMusic},
-	{SQSH_MM_SOUND_SOUNDEFFECTS_COMBO,OnComboSoundEffects},
-	{SQSH_MM_SOUND_SOUNDEFFECTS_COMBO,OnComboSoundEffects},
 	{SQSH_MM_SOUND_SOUNDVOLUME_SLIDER,OnSliderSoundVolume},
-	{SQSH_MM_SOUND_MUSICVOLUME_SLIDER,OnSliderMusicVolume},
+    {SQSH_MM_SOUND_MUSICVOLUME_SLIDER,OnSliderMusicVolume},
+    {SQSH_MM_SOUND_VOICEVOLUME_SLIDER,OnSliderVoiceVolume},
+    {SQSH_MM_SOUND_SPEECHVOLUME_SLIDER,OnSliderSpeechVolume},
 
 	{SQSH_MM_GRAPHICS_FURROWS_COMBO,OnComboGraphicsFurrows},
 	{SQSH_MM_GAME_TOOLTIPS_COMBO,OnComboGameTooltips},
     {SQSH_MM_GAME_RUN_BACKGROUND_COMBO,OnComboGameRunBackground},
+    {SQSH_MM_GAME_START_SPLASH_COMBO,OnComboGameStartSplash},
+    {SQSH_MM_GAME_CAMERA_MODE_COMBO,OnComboGameCameraMode},
     {SQSH_MM_GRAPHICS_UI_ANCHOR_COMBO,OnComboGraphicsUIAnchor},
+    {SQSH_MM_GRAPHICS_VSYNC_COMBO,OnComboGraphicsVSync},
     {SQSH_MM_GRAPHICS_GRAB_INPUT_COMBO,OnComboGraphicsInputGrab},
     {SQSH_MM_GRAPHICS_FOG_COMBO,OnComboGraphicsFog},
-	{SQSH_MM_GRAPHICS_COLORDEPTH_COMBO,OnComboGraphicsColorDepth},
+	//{SQSH_MM_GRAPHICS_COLORDEPTH_COMBO,OnComboGraphicsColorDepth},
 	{SQSH_MM_GRAPHICS_MODE_COMBO,OnComboGraphicsMode},
 	{SQSH_MM_GRAPHICS_SHADOWS_COMBO,OnComboGraphicsShadows},
 	{SQSH_MM_GRAPHICS_REFLECTION_COMBO,OnComboGraphicsReflection},
@@ -502,13 +543,18 @@ CShellCursorManager::CShellCursorManager()
 }
 CShellCursorManager::~CShellCursorManager()
 {
-//	Done();
+	Done();
 }
 void CShellCursorManager::Done()
 {
-	std::deque<CURSOR>::iterator i;
-	FOR_EACH(m_cursors, i)
-        _RELEASE(i->hCursorProgram);
+    for (auto& cur : m_cursors) {
+        _RELEASE(cur.texture);
+        if (cur.anifile) {
+            delete cur.anifile;
+            cur.anifile = nullptr;
+        }
+    }
+    m_cursors.clear();
 
 	_RELEASE(m_hFontCursorWorkarea);
 	_RELEASE(hFontMainmenu1);
@@ -519,17 +565,30 @@ void CShellCursorManager::Done()
 
 void CShellCursorManager::Load()
 {
-	CURSOR _c;
-	for(int i=0; i<_sqsh_cursor_count; i++)
-	{
+    CShellCursor _c;
+	for (int i=0; i<_sqsh_cursor_count; i++) {
 		sqshCursor& cc = _sqsh_cursors[i];
 
+        std::string image = cc.image;
+
+        _c.anifile = nullptr;
 		_c.sx = cc.sx; 
 		_c.sy = cc.sy;
-		_c.bHotspotCentred = cc.hotspot_center;
-        _c.hCursorProgram = terVisGeneric->CreateTexture(cc.image);
+		_c.bHotspotCentered = cc.hotspot_center;
+        _c.texture = terVisGeneric->CreateTexture(image.c_str());
 
-		m_cursors.push_back(_c);
+        //Load ANI file metadata
+        if (get_content_entry(image) && isANIFile(image.c_str())) {
+            _c.anifile = new ANIFile();
+            int err = _c.anifile->load(image.c_str(), false);
+            if (err) {
+                fprintf(stderr, "Error %d loading ANI metadata for cursor %s\n", err, image.c_str());
+                delete _c.anifile;
+                _c.anifile = nullptr;
+            }
+        }
+
+		m_cursors.emplace_back(_c);
 	}
 
 	//The default one is the first one (RESOURCE\\cursors\\arrow.cur)
@@ -537,7 +596,7 @@ void CShellCursorManager::Load()
 
 	SetActiveCursor(arrow);	
 
-	m_hFontCursorWorkarea = terVisGeneric->CreateFont(sqshShellMainFont, sqshCursorWorkAreaSize);
+	m_hFontCursorWorkarea = terVisGeneric->CreateGameFont(sqshShellMainFont, sqshCursorWorkAreaSize);
 }
 void CShellCursorManager::SetActiveCursor(int cursor, char bPermanent)
 {
@@ -552,7 +611,11 @@ void CShellCursorManager::SetActiveCursor(int cursor, char bPermanent)
 
 void CShellCursorManager::OnWMSetCursor()
 {
+#ifdef PERIMETER_DEBUG
+    SDL_ShowCursor(SDL_TRUE);
+#else
     SDL_ShowCursor(SDL_FALSE);
+#endif
     
 	if(!m_pActiveCursor)
 		return;
@@ -604,6 +667,30 @@ void CShellCursorManager::OnMouseMove(float x, float y)
 	}
 }
 
+void CShellCursorManager::DrawCursor(const CShellCursor* cursor, int x, int y, float phase, float scale) {
+    int sx = static_cast<int>(cursor->sx * scale);
+    int sy = static_cast<int>(cursor->sy * scale);
+    const ANIFile* ani = cursor->anifile;
+    if (ani) {
+        int i = static_cast<int>(phase * 1000) / ani->tpf;
+#ifdef PERIMETER_DEBUG_ASSERT
+        if (i >= ani->slices.size()) {
+            ErrH.Abort("Attempted to read slice " + std::to_string(i) + " which is out of bounds " + std::to_string(ani->slices.size()));
+        }
+#endif
+        size_t fi = ani->slices[i];
+#ifdef PERIMETER_DEBUG_ASSERT
+        if (fi >= ani->frames.size()) {
+            ErrH.Abort("Attempted to read frame " + std::to_string(fi) + " which is out of bounds " + std::to_string(ani->frames.size()));
+        }
+#endif
+        auto& hotspot = ani->frames[fi].hotspot;
+        x -= static_cast<int>(hotspot.x * scale);
+        y -= static_cast<int>(hotspot.y * scale);
+    }
+    terRenderDevice->DrawSprite(x, y, sx, sy, 0, 0, 1, 1, cursor->texture, sColor4c(255, 255, 255, 255), phase);
+}
+
 void CShellCursorManager::draw()
 {
 	m_ftime += frame_time.delta();
@@ -611,38 +698,24 @@ void CShellCursorManager::draw()
 	//Draw camera icons
 	if(_shellIconManager.IsInterface())
 	{
-		if(gameShell->cameraMouseShift)
-		{
-			//курсор сдвига карты
-			Vect3f v1,e1;
-			terCamera->GetCamera()->ConvertorWorldToViewPort(&gameShell->mapMoveStartPoint(), &v1, &e1);
-
-			CURSOR* pCursor = &m_cursors[map_move];
-
-			e1.x -= 16;
-			e1.y -= 16;
-
-			terRenderDevice->DrawSprite(e1.x, e1.y, pCursor->sx, pCursor->sy,
-				0, 0, 1, 1, pCursor->hCursorProgram, sColor4c(255, 255, 255, 255));
-
-			return;
-		}
-		if(gameShell->cameraMouseTrack)
-		{
-			CURSOR* pCursor;
-			if(terCamera->tilting())
-				 pCursor = &m_cursors[tilt];
-			else
-				 pCursor = &m_cursors[rotate];
-
-			int x = (gameShell->mousePressControl().x + 0.5f)*terScreenSizeX - 16;
-			int y = (gameShell->mousePressControl().y + 0.5f)*terScreenSizeY - 16;
-
-			terRenderDevice->DrawSprite(x, y, pCursor->sx, pCursor->sy,
-				0, 0, 1, 1, pCursor->hCursorProgram, sColor4c(255, 255, 255, 255));
-
-			return;
-		}
+        const CShellCursor* cursor = nullptr;
+        Vect2f pos;
+        if (gameShell->cameraMouseShift) {
+            cursor = &m_cursors[map_move];
+            pos = gameShell->mousePosition();
+        }
+        if (gameShell->cameraMouseTrack) {
+            cursor = &m_cursors[terCamera->tilting() ? tilt : rotate];
+            pos = gameShell->mousePressControl();
+        }
+        if (cursor) {
+            DrawCursor(
+                    cursor,
+                    static_cast<int>(((pos.x + 0.5f)*terScreenSizeX) - cursor->sx * 0.5f),
+                    static_cast<int>(((pos.y + 0.5f)*terScreenSizeY) - cursor->sy * 0.5f)
+            );
+            return;
+        }
 	}
 
 	//Draw displacement arrows
@@ -676,14 +749,17 @@ void CShellCursorManager::draw()
 		}
 
 		//сдвиг карты
-		terRenderDevice->DrawSprite(xm::round(terScreenSizeX * cur_x) + dx, xm::round(terScreenSizeY * cur_y) + dy,
-                                    m_cursors[m_nCursorShift].sx, m_cursors[m_nCursorShift].sy,
-                                    0, 0, 1, 1, m_cursors[m_nCursorShift].hCursorProgram, sColor4c(255, 255, 255, 255), xm::fmod(m_ftime, 1000)/1000.f);
+        DrawCursor(
+            &m_cursors[m_nCursorShift],
+            xm::round(terScreenSizeX * cur_x) + dx,
+            xm::round(terScreenSizeY * cur_y) + dy,
+            xm::fmod(m_ftime, 1000) / 1000.f
+        );
 		return;
 	}
 
 	//Draw normal cursor
-	CURSOR* cursor = m_pActiveCursor;	
+    CShellCursor* cursor = m_pActiveCursor;	
 	if(_bCursorVisible && !m_nCursorShift && cursor)
 	{
         //If game is running then set default cursor if user is hovering on a control
@@ -692,8 +768,9 @@ void CShellCursorManager::draw()
             cursor = m_pCursorDefault;
         }
 
-#if 0 //Shows current hovering control 
-        if (_shellIconManager.m_pCtrlHover) {
+#ifdef PERIMETER_DEBUG
+        //Shows current hovering control 
+        if (_shellIconManager.m_pCtrlHover && debug_show_intf_borders) {
             std::string text;
             EnumWrapper<ShellControlID> eid = static_cast<ShellControlID>(_shellIconManager.m_pCtrlHover->ID); 
             text += std::string("C:") + getEnumName(eid);
@@ -709,30 +786,36 @@ void CShellCursorManager::draw()
             printf("%s\n", text.c_str());
         }
 #endif
+        bool is_cursor_workarea = (cursor == &m_cursors[workarea_in]) || (cursor == &m_cursors[workarea_out]);
+        bool is_cursor_toolzer = (cursor == &m_cursors[rov]) || is_cursor_workarea;
         
 	    //Get cursor scale factor
 		float fScale = 1.0f;
-		if((cursor == &m_cursors[workarea_in]) || (cursor == &m_cursors[workarea_out])) {
+		if (is_cursor_workarea) {
             fScale = fCursorWorkareaDefaultHeight / terCamera->coordinate().distance();
         }
 
 		//Apply offset for cursor position
-        float draw_cur_x = cur_x;
-        float draw_cur_y = cur_y;
-        if(cursor->bHotspotCentred)
+        float draw_cur_x = cur_x;// - cursor->hotspot.x;
+        float draw_cur_y = cur_y;// - cursor->hotspot.y;
+        if (cursor->bHotspotCentered)
         {
-            draw_cur_x -= fScale*cursor->sx/terScreenSizeX*fWorkAreaCenterX;
-            draw_cur_y -= fScale*cursor->sy/terScreenSizeY*fWorkAreaCenterY;
+            draw_cur_x -= fScale*cursor->sx/terScreenSizeX*(is_cursor_toolzer ? fWorkAreaCenterX : 0.5f);
+            draw_cur_y -= fScale*cursor->sy/terScreenSizeY*(is_cursor_toolzer ? fWorkAreaCenterY : 0.5f);
         }
 
         //Draw it
-		terRenderDevice->DrawSprite(xm::round(terScreenSizeX * draw_cur_x), xm::round(terScreenSizeY * draw_cur_y),
-			fScale*cursor->sx, fScale*cursor->sy,
-                                    0, 0, 1, 1, cursor->hCursorProgram, sColor4c(255, 255, 255, 255), xm::fmod(m_ftime, 1000)/1000.f);
+		DrawCursor(
+            cursor,
+            xm::round(terScreenSizeX * draw_cur_x),
+            xm::round(terScreenSizeY * draw_cur_y),
+            xm::fmod(m_ftime, 1000) / 1000.f,
+            fScale
+        );
 
 	    //высота до зерослоя / Text for toolzer
 	    if(!_pShellDispatcher->m_bToolzerSizeChangeMode
-	    && (cursor == &m_cursors[workarea_in] || cursor == &m_cursors[workarea_out]))
+	    && (is_cursor_toolzer))
 		{
 			Vect3f v;
 			if(terCamera->cursorTrace(Vect2f(_pShellDispatcher->m_fMouseCurrentX-0.5f, _pShellDispatcher->m_fMouseCurrentY-0.5f), v))
@@ -798,6 +881,7 @@ CShellIconManager::CShellIconManager()
     initialMenu = SQSH_MM_START_SCR;
 
 	m_editMode = false;
+    interfaceShowFlag_ = true;
 
 	speechSound = 0;
 	resultMusicStarted = false;
@@ -841,10 +925,10 @@ void CShellIconManager::Done()
 	}
 
 	if (speechSound) {
-		SNDEnableVoices(true);
+		SNDEnableVoices(0 < terVoiceVolume);
 		speechSound->Stop();
 		delete speechSound;
-		speechSound = 0;
+		speechSound = nullptr;
 	}
 
 	cutSceneModeOn = false;
@@ -882,10 +966,10 @@ CShellIconManager::~CShellIconManager()
 
 void CShellIconManager::addChatString(const LocalizedText* newChatString) {
 	CChatInfoWindow* wnd;
-	if (cutSceneModeOn) {
-		wnd = (CChatInfoWindow*)controls[SQSH_CHAT_INFO_ID];
+    if (interfaceShowFlag()) {
+        wnd = (CChatInfoWindow*)GetWnd(SQSH_CHAT_INFO_ID);
 	} else {
-		wnd = (CChatInfoWindow*)GetWnd(SQSH_CHAT_INFO_ID);
+        wnd = (CChatInfoWindow*)controls[SQSH_CHAT_INFO_ID];
 	}
 	xassert(wnd);
 	if (wnd) {
@@ -897,10 +981,10 @@ void CShellIconManager::addChatString(const LocalizedText* newChatString) {
 
 void CShellIconManager::showHintChat(const LocalizedText* text, int showTime) {
 	CChatInfoWindow* wnd;
-	if (cutSceneModeOn) {
-		wnd = (CChatInfoWindow*)controls[SQSH_CHAT_INFO_ID];
+    if (interfaceShowFlag()) {
+        wnd = (CChatInfoWindow*)GetWnd(SQSH_CHAT_INFO_ID);
 	} else {
-		wnd = (CChatInfoWindow*)GetWnd(SQSH_CHAT_INFO_ID);
+        wnd = (CChatInfoWindow*)controls[SQSH_CHAT_INFO_ID];
 	}
 	if (wnd) {
 		wnd->AddString(text);
@@ -914,10 +998,10 @@ void CShellIconManager::showHint(const char* text, int showTime, ActionTask::Typ
 	}
 
 	CHintWindow* wnd;
-	if (cutSceneModeOn) {
-		wnd = (CHintWindow*)controls[SQSH_HINT_ID];
+    if (interfaceShowFlag()) {
+        wnd = (CHintWindow*)GetWnd(SQSH_HINT_ID);
 	} else {
-		wnd = (CHintWindow*)GetWnd(SQSH_HINT_ID);
+        wnd = (CHintWindow*)controls[SQSH_HINT_ID];
 	}
 	xassert(wnd);
 	if (wnd) {
@@ -935,6 +1019,8 @@ void CShellIconManager::showHint(const char* text, int showTime, ActionTask::Typ
 
 		std::string res = qdTextDB::instance().getText(text);
 		switch (actionType) {
+            default:
+                break;
 			case ActionTask::COMPLETED:
 				res = qdTextDB::instance().getText("Interface.Tips.Completed") + res;
 				break;
@@ -1014,10 +1100,10 @@ void CShellIconManager::fillTaskWnd() {
 	}
 
 	CTextWindow* wnd;
-	if (cutSceneModeOn) {
-		wnd = (CTextWindow*)controls[SQSH_MM_MISSION_TASK_TXT];
+	if (interfaceShowFlag()) {
+        wnd = (CTextWindow*)GetWnd(SQSH_MM_MISSION_TASK_TXT);
 	} else {
-		wnd = (CTextWindow*)GetWnd(SQSH_MM_MISSION_TASK_TXT);
+        wnd = (CTextWindow*)controls[SQSH_MM_MISSION_TASK_TXT];
 	}
 	xassert(wnd);
 	if (wnd) {
@@ -1042,10 +1128,7 @@ void CShellIconManager::save(SaveTaskList& tasksOut) const {
 
 void CShellIconManager::onSizeChanged() {
 	_pShellDispatcher->updateSmallCamera();
-
-	if (m_pDesktop) {
-		reload(m_pDesktop);
-	}
+    reloadDesktop();
 
 	//scale textures
 	_RELEASE(m_hPopupTexture);
@@ -1054,13 +1137,21 @@ void CShellIconManager::onSizeChanged() {
 	m_hTextureProgressBars = terVisGeneric->CreateTexture(progress_texture);
 }
 
+void CShellIconManager::reloadDesktop() {
+    if (m_pDesktop) {
+        reload(m_pDesktop);
+    }
+}
+
 void CShellIconManager::reload(CShellWindow* pTop) {
-	if (pTop) {
-		pTop->reload();
-		std::list<CShellWindow*>::iterator i;
-		FOR_EACH(pTop->m_children, i)
-			if (*i) reload(*i);
-	}
+	if (!pTop) return;
+
+    pTop->reload();
+    for (auto wnd : pTop->m_children) {
+        if (wnd) {
+            reload(wnd);
+        }
+    }
 }
 
 void CShellIconManager::LoadControlsGroup(int nGroup, bool force)
@@ -1137,10 +1228,10 @@ void CShellIconManager::LoadControlsGroup(int nGroup, bool force)
 	}
 
 	//post load
-	hFontMainmenu1 = terVisGeneric->CreateFont(shell_main_menu_font, shell_main_menu_font_size1);
-	hFontMainmenu2 = terVisGeneric->CreateFont(shell_main_menu_font, shell_main_menu_font_size2);
-	hFontMainmenu3 = terVisGeneric->CreateFont(shell_main_menu_font, shell_main_menu_font_size3);
-	hFontMainmenu4 = terVisGeneric->CreateFont(shell_main_menu_font, shell_main_menu_font_size4);
+	hFontMainmenu1 = terVisGeneric->CreateGameFont(shell_main_menu_font, shell_main_menu_font_size1);
+	hFontMainmenu2 = terVisGeneric->CreateGameFont(shell_main_menu_font, shell_main_menu_font_size2);
+	hFontMainmenu3 = terVisGeneric->CreateGameFont(shell_main_menu_font, shell_main_menu_font_size3);
+	hFontMainmenu4 = terVisGeneric->CreateGameFont(shell_main_menu_font, shell_main_menu_font_size4);
 
 	switch(nGroup)
 	{
@@ -1151,11 +1242,7 @@ void CShellIconManager::LoadControlsGroup(int nGroup, bool force)
 //			if (gameShell->GameActive) {
 //				gameShell->pauseGame(true);
 //			}
-//#ifdef PERIMETER_DEBUG
 			((CTextWindow*) GetWnd(SQSH_MM_VERSION_TXT))->setText(currentVersion);
-//#else
-//            ((CTextWindow*) GetWnd(SQSH_MM_VERSION_TXT))->setText(currentShortVersion);
-//#endif
 		}
 		break;
 
@@ -1164,8 +1251,8 @@ void CShellIconManager::LoadControlsGroup(int nGroup, bool force)
 			_shellCursorManager.m_bShowSideArrows = 1;
 			_bMenuMode = 0;
 
-			m_hFontPopup = terVisGeneric->CreateFont(sqshFontPopup, infoWndFontSize);
-			m_hFontCountDownTime = terVisGeneric->CreateFont(sqshFontCountDownTime, sqshFontCountDownTimeSize);
+			m_hFontPopup = terVisGeneric->CreateGameFont(sqshFontPopup, infoWndFontSize);
+			m_hFontCountDownTime = terVisGeneric->CreateGameFont(sqshFontCountDownTime, sqshFontCountDownTimeSize);
 			m_hPopupTexture = terVisGeneric->CreateTexture(sPopupTexture);
 
 			PostLoadTabSheets();
@@ -1191,7 +1278,7 @@ void CShellIconManager::LoadTabSheets()
 		CUITabSheet* pSheet = new CUITabSheet(sheet.id, m_pDesktop, _GetEventHandler(sheet.id));
 		xassert(sheet.id <= SQSH_MAX);
 		controls[sheet.id] = pSheet;
-		pSheet->Load(&sheet);
+		pSheet->LoadSheet(&sheet);
 //		pSheet->scale(Vect2f(terScreenSizeX / 1024.0f, terScreenSizeY / 768.0f));
 		pSheet->Show(1);
 	}
@@ -1202,7 +1289,7 @@ void CShellIconManager::PostLoadTabSheets()
 	CShellWindow* pBkg = GetWnd(SQSH_BACKGRND_ID);
 	if(pBkg)
 	{
-		CShellWindow* pTab;
+		CShellWindow* pTab = nullptr;
 		std::list<CShellWindow*>::iterator i_tab;
 				
 		//buildings tab
@@ -1236,10 +1323,12 @@ void CShellIconManager::PostLoadTabSheets()
 void CShellIconManager::OpenPromtMessagesFile()
 {
 }
-char* CShellIconManager::FormatMessageText(const char* cbTag, char* cb, ...)
+
+void CShellIconManager::FormatMessageText(const char* cbTag, std::string* cb, ...)
 {
 	const int bufferSize = 2000;
 	static char cbTempBuffer[bufferSize];
+    xassert(cbTag && cb);
 
 	std::string text;
 	//ищем тэг
@@ -1252,21 +1341,16 @@ char* CShellIconManager::FormatMessageText(const char* cbTag, char* cb, ...)
         text = (cbTag + 1);
     }
 	if (text.length()) {
-		strncpy(cbTempBuffer, text.c_str(), text.length());
-		cbTempBuffer[text.length()] = '\0';
-
 		va_list va;
 		va_start(va, cb);
-		vsprintf(cb, cbTempBuffer, va);
+        vsnprintf(cbTempBuffer, bufferSize - 1, text.c_str(), va);
 		va_end(va);
-	}
-	else
-		*cb = '\0';
-
-	xassert(strlen(cb) < bufferSize);
-
-	return cb;
-}
+        cbTempBuffer[bufferSize-1] = 0;
+        *cb = cbTempBuffer;
+	} else {
+        cb->clear();
+    }
+}   
 
 void CShellIconManager::setCutSceneMode(bool on, bool animated) {
 	if (!on) {
@@ -1361,38 +1445,42 @@ void CShellIconManager::speedChanged(float speed) {
 
 float CShellIconManager::playSpeech(const char* id) {
 	std::string sound = qdTextDB::instance().getSound(id);
-	if (terSoundEnable && speechSound && !sound.empty()) {
+	if (0 < terSpeechVolume && speechSound && !sound.empty()) {
 		size_t pos = sound.find("Voice");
 		if(pos != std::string::npos)
 			sound.erase(0, pos);
 		std::string soundName = getLocDataPath() + sound;
         speechSound->requestPlay(true); //Avoid SNDEnableVoices being enabled again too soon
 		SNDEnableVoices(false);
-		speechSound->SetVolume(terSoundVolume);
+        speechSound->Stop();
+        speechSound->SetVolumeSelection(GLOBAL_VOLUME_IGNORE); //We set volume here manually
+        speechSound->SetVolume(terSpeechVolume);
 		int ret = speechSound->OpenToPlay(soundName.c_str(), false);
 		xassert(ret);
 		return speechSound->GetLen();
 	}
 	return 0;
 }
+
 void CShellIconManager::playGameOverSound(const char* path) {
-	if (terSoundEnable && speechSound) {
+	if (0 < terSoundVolume && speechSound) {
 		gb_Music.FadeVolume(0.5f, 0.0f);
         speechSound->Stop();
-		speechSound->SetVolume(terSoundVolume);
+        speechSound->SetVolumeSelection(GLOBAL_VOLUME_EFFECTS);
+        speechSound->SetVolume(1.0f); //Use global volume of effects
 		resultMusicStarted = true;
-		bool ret = speechSound->OpenToPlay(path, false);
+        bool ret = speechSound->OpenToPlay(path, false);
         if (!ret) {
             fprintf(stderr, "playGameOverSound %s error\n", path);
+            xassert(0);
         }
 	}
 }
+
 void CShellIconManager::setupAudio() {
-	if (speechSound) {
-		if (!terSoundEnable) {
-			speechSound->Stop();
-		}
-		speechSound->SetVolume(terSoundVolume);
+	if (speechSound && speechSound->IsPlay()) {
+        //Set volume, a speech might be playing while user is adjusting
+		speechSound->SetVolume(terSpeechVolume);
 	}
 }
 
@@ -1415,10 +1503,11 @@ CShellWindow* CShellIconManager::GetWnd(int id)
 //		return 0;
 
 
-	if(getDesktop() && m_pDesktop->ID == id)
-		return m_pDesktop;
-	else
-		return controls[id];
+    if (getDesktop() && m_pDesktop->ID == id) {
+        return m_pDesktop;
+    } else {
+        return controls[id];
+    }
 
 //	return FindWnd(m_pDesktop, id);
 }
@@ -1499,6 +1588,10 @@ CShellWindow* CShellIconManager::CreateWnd(int id, ShellControlType type, CShell
 	case SQSH_TEXT_STRING_WINDOW_TYPE:
 		pWnd = new CTextStringWindow(id, pParent, proc);
 		break;
+        
+    case SQSH_TEXT_SCROLLABLE_WINDOW_TYPE:
+        pWnd = new CTextScrollableWindow(id, pParent, proc);
+        break; 
 
 	case SQSH_COMPLEX_PUSH_BUTTON_TYPE:
 		pWnd = new CShellComplexPushButton(id, pParent, proc);
@@ -1572,6 +1665,10 @@ CShellWindow* CShellIconManager::CreateWnd(int id, ShellControlType type, CShell
 		pWnd = new CInfoWindow(id, pParent, proc);
 		break;
 
+    case SQSH_NETLATENCYINFOWND_TYPE:
+        pWnd = new CNetLatencyInfoWindow(id, pParent, proc);
+        break;
+
 	case SQSH_CHATINFO_WND_TYPE:
 		pWnd = new CChatInfoWindow(id, pParent, proc);
 		break;
@@ -1612,48 +1709,55 @@ CShellWindow* CShellIconManager::CreateWnd(int id, ShellControlType type, CShell
 	return pWnd;
 }
 
-void CShellIconManager::AddDynamicHandler(DYNCALLBACK _p, int code, int delay)
+void CShellIconManager::AddDynamicHandler(DYNCALLBACK _p, DynQueueCode code, int delay)
 {
-	MTAuto dynQueue_autolock(&dynQueue_lock);
+    xassert(0 <= code && code < NUM_CBCODE_MAX);
 
 //	fout < "AddDynamicHandler\n";
+    
+    DynQueue& dynqueue = m_dyn_queues[code];
+	MTAuto dynQueue_autolock(&dynqueue.lock);
+    dynqueue.empty = false;
 
-	std::list<DYN_QUEUE_ITEM>::iterator i;
-	FOR_EACH(m_dyn_queue, i)
-		if((i->cbproc == _p) && (i->code == code))
-		{
-			i->bDelete = 0;
-			i->time_delay = delay;
-			return;
-		}
+	for (auto& i : dynqueue.items) {
+        if (i.cbproc == _p) {
+            i.bDelete = false;
+            i.time_delay = delay;
+            return;
+        }
+    }
 
-	m_dyn_queue.push_back(DYN_QUEUE_ITEM(_p, code, delay));
+    dynqueue.items.emplace_back(_p, delay);
 }
-void CShellIconManager::DelDynamicHandler(DYNCALLBACK _p, int code)
+void CShellIconManager::DelDynamicHandler(DYNCALLBACK _p, DynQueueCode code)
 {
-	MTAuto dynQueue_autolock(&dynQueue_lock);
-
+    xassert(0 <= code && code < NUM_CBCODE_MAX);
+    
 //	fout < "DelDynamicHandler\n";
 
-	std::list<DYN_QUEUE_ITEM>::iterator i;
-	FOR_EACH(m_dyn_queue, i)
-		if(( (i->cbproc == _p) || (_p == 0) ) && ( (i->code == code) || (code == 0) ))
-		{
-			i->bDelete = 1;
-			break;
-		}
-}
-
-bool CShellIconManager::HasDynamicHandler(DYNCALLBACK _p, int code) {
-	MTAuto dynQueue_autolock(&dynQueue_lock);
-
-	std::list<DYN_QUEUE_ITEM>::iterator i;
-	FOR_EACH (m_dyn_queue, i) {
-		if (( (i->cbproc == _p) || (_p == 0) ) && ( (i->code == code) || (code == 0) )) {
-			return true;
-		}
-	}
-	return false;
+    DynQueue& dynqueue = m_dyn_queues[code];
+    if (dynqueue.empty) return;
+    MTAuto dynQueue_autolock(&dynqueue.lock);
+    auto& items = dynqueue.items;
+    
+    bool found = false;
+    for (auto& i : items) {
+        if (_p == nullptr || i.cbproc == _p) {
+            i.bDelete = true;
+            found = true;
+            break;
+        }
+    }
+    
+    if (found) {
+        dynqueue.empty = true;
+        for (auto& item : items) {
+            if (!item.bDelete) {
+                dynqueue.empty = false;
+                break;
+            }
+        }
+    }
 }
 
 CShellWindow* CShellIconManager::HitTest(float x, float y)
@@ -1718,7 +1822,11 @@ bool CShellIconManager::isInEditMode() const
 
 void CShellIconManager::SetModalWnd(int id)
 {
-	m_pModalWnd = id ? GetWnd(id) : 0;
+	m_pModalWnd = id ? GetWnd(id) : nullptr;
+}
+
+CShellWindow* CShellIconManager::GetModalWnd() {
+    return m_pModalWnd;
 }
 
 int CShellIconManager::OnMouseMove(float x, float y)
@@ -1782,7 +1890,8 @@ int CShellIconManager::OnLButtonDown(float x, float y)
 		}
 		(m_pLastClicked = m_pFocus = pWnd)->OnLButtonDown(x, y);
 		if (universe()) {
-			universe()->checkEvent(EventClickOnButton((ShellControlID)pWnd->ID));
+            EventClickOnButton ev((ShellControlID)pWnd->ID);
+			universe()->checkEvent(&ev);
 		}
 		m_fTimePressed = frame_time();
 		r = 1;
@@ -1947,54 +2056,73 @@ void CShellIconManager::DrawControls(CShellWindow* pTop)
 		pTop->draw(m_pLastClicked == pTop);
 
 	std::list<CShellWindow*>::iterator i;
-	FOR_EACH(pTop->m_children, i)
-		DrawControls(*i);
+    for (auto i : pTop->m_children) {
+        DrawControls(i);
+    }
 
 	if (pTop->ID == SQSH_GAME_SCREEN_ID) {
 		terRenderDevice->FlushPrimitive2D();		
 	}
 }
-int CShellIconManager::ProcessDynQueue(int code, float x, float y)
+
+int CShellIconManager::ProcessDynQueue(DynQueueCode code, float x, float y)
 {
-	MTAuto dynQueue_autolock(&dynQueue_lock);
+    xassert(0 <= code && code < NUM_CBCODE_MAX);
 
 //	fout < "ProcessDynQueue " < code < "\n";
 
-	int r = 0;
+    DynQueue& dynqueue = m_dyn_queues[code];
+    MTAuto dynQueue_autolock(&dynqueue.lock);
+    auto& items = dynqueue.items;
 
-	std::list<DYN_QUEUE_ITEM>::iterator i = m_dyn_queue.begin();
-	while (i != m_dyn_queue.end()) {
+    int r = 0;
+	auto i = items.begin();
+	while (i != items.end()) {
 //		fout < "	 DYN_QUEUE_ITEM=" < ((DWORD)i->cbproc) < "\n";
 		if (i->bDelete) {
 //			fout < "	 delete\n";
-			i = m_dyn_queue.erase(i);
+			i = items.erase(i);
 		} else {
-			if ((i->code == code) && (i->time_delay <= 0)) {
+			if (i->time_delay <= 0) {
+                r = 1;
 //				fout < "	 process\n";
-				if ( !(*i->cbproc)(x,y) ) {
-					i->bDelete = 1;
-					return 1;
-				}
-				r = 1;
+                xassert(i->cbproc);
+				if ( (*i->cbproc)(x,y) == 0 ) {
+					i->bDelete = true;
+                    break;
+                }
 			}
 			i++;
 		}
 	}
 
+    dynqueue.empty = true;
+    for (auto& item : items) {
+        if (!item.bDelete) {
+            dynqueue.empty = false;
+            break;
+        }
+    }
+
 	return r;
 }
 void CShellIconManager::QuantDynQueue(int dt)
 {
-	MTAuto dynQueue_autolock(&dynQueue_lock);
-
-	std::list<DYN_QUEUE_ITEM>::iterator i;
-	FOR_EACH(m_dyn_queue, i)
-		i->time_delay -= dt;
+    for (auto& dynqueue : m_dyn_queues) {
+        MTAuto dynQueue_autolock(&dynqueue.lock);
+        for (auto& i: dynqueue.items) {
+            i.time_delay -= dt;
+        }
+    }
 }
 
 bool CShellIconManager::isDynQueueEmpty() {
-	MTAuto dynQueue_autolock(&dynQueue_lock);
-	return (m_dyn_queue.size() == 0);
+    for (auto& queue : m_dyn_queues) {
+        if (!queue.empty) {
+            return false;
+        }
+    }
+	return true;
 }
 
 void CShellIconManager::quant(float dTime)
@@ -2013,7 +2141,7 @@ void CShellIconManager::quant(float dTime)
 	}
 
 	if (!SNDIsVoicesEnabled() && speechSound && !speechSound->IsPlay() && !cutSceneModeOn) {
-		SNDEnableVoices(true);
+        SNDEnableVoices(0 < terVoiceVolume);
 	}
 
     //Start music again after victory/defeat sound
@@ -2044,20 +2172,20 @@ void CShellIconManager::quant(float dTime)
 	ProcessDynQueue(CBCODE_QUANT);
 }
 
-inline int _is_track(RECT& rc)
+inline int _is_track(sRect& rc)
 {
 	return rc.left || rc.top || rc.right || rc.bottom;
 }
-inline int rect_width(RECT& rc)
+inline int rect_width(sRect& rc)
 {
 	return rc.right - rc.left;
 }
-inline int rect_height(RECT& rc)
+inline int rect_height(sRect& rc)
 {
 	return rc.bottom - rc.top;
 }
 
-void PopupFormatAttack(const AttributeBase* attr, char* cbBuffer, bool gun) {
+void PopupFormatAttack(const AttributeBase* attr, std::string& cbBuffer, bool gun) {
 	std::string attacks;
 	std::string unitClass;
 	int count = 0;
@@ -2086,15 +2214,15 @@ void PopupFormatAttack(const AttributeBase* attr, char* cbBuffer, bool gun) {
 	}
 
 	std::string balance;
-	static char cbTemp[200];
+	static std::string cbTemp;
 	if (attr->intfBalanceData.power) {
-		_shellIconManager.FormatMessageText("<damage>", cbTemp, attr->intfBalanceData.power, attr->intfBalanceData.width );
+		_shellIconManager.FormatMessageText("<damage>", &cbTemp, attr->intfBalanceData.power, attr->intfBalanceData.width );
 		balance += "\n";
 		balance += cbTemp;
 	}
 	if (!gun) {
         int armor = xm::round(attr->intfBalanceData.armor);
-		_shellIconManager.FormatMessageText("<armor>", cbTemp, armor );
+		_shellIconManager.FormatMessageText("<armor>", &cbTemp, armor );
 		if (balance.empty()) {
 			balance += "\n";
 		}
@@ -2104,14 +2232,14 @@ void PopupFormatAttack(const AttributeBase* attr, char* cbBuffer, bool gun) {
 
 	_shellIconManager.FormatMessageText(
 		"<Attack>",
-		cbBuffer,
+        &cbBuffer,
 		balance.c_str(),
 		unitClass.c_str(),
 		attacks.c_str()
 	);
 }
 
-void PopupFormatBuilding(const AttributeBase* attr, char* cbBuffer, bool onControl, terUnitBase* unit, bool ampl, bool gun)
+void PopupFormatBuilding(const AttributeBase* attr, std::string& cbBuffer, bool onControl, terUnitBase* unit, bool ampl, bool gun)
 {
 	const UnitInterfacePrm& prm = attr->interfacePrm;
 
@@ -2121,8 +2249,8 @@ void PopupFormatBuilding(const AttributeBase* attr, char* cbBuffer, bool onContr
 	terPlayer* player = unit ? universe()->findPlayer(unit->playerID()) : universe()->activePlayer();
 	bool enemy = unit ? (unit->playerID() != universe()->activePlayer()->playerID()) : false;
 
-	static char cbTemp[200];
-	_shellIconManager.FormatMessageText("<requires>", cbTemp);
+	static std::string cbTemp;
+	_shellIconManager.FormatMessageText("<requires>", &cbTemp);
 	if (enemy) {
 		if(attr->isBuilding())
 		{
@@ -2153,10 +2281,10 @@ void PopupFormatBuilding(const AttributeBase* attr, char* cbBuffer, bool onContr
 			sRequired += "&FFFFFF";
 			if (gun) {
 				PopupFormatAttack(attr, cbTemp, true);
-				_shellIconManager.FormatMessageText(prm.popup, cbBuffer, sRequired.c_str(), "", attr->buildEnergy(), cbTemp);
+				_shellIconManager.FormatMessageText(prm.popup, &cbBuffer, sRequired.c_str(), "", attr->buildEnergy(), cbTemp.c_str());
 			} else {
 				float buildEnergy = attr->buildEnergy();
-				_shellIconManager.FormatMessageText(prm.popup, cbBuffer, sRequired.c_str(), "", buildEnergy, ampl ? attr->energyCapacity : attr->MakeEnergy);
+				_shellIconManager.FormatMessageText(prm.popup, &cbBuffer, sRequired.c_str(), "", buildEnergy, ampl ? attr->energyCapacity : attr->MakeEnergy);
 			}
 //		}
 	} else {
@@ -2198,57 +2326,59 @@ void PopupFormatBuilding(const AttributeBase* attr, char* cbBuffer, bool onContr
 			sRequired += "&FFFFFF";
 			if (gun) {
 				PopupFormatAttack(attr, cbTemp, true);
-				_shellIconManager.FormatMessageText( prm.popup,	cbBuffer, sRequired.c_str(), (noEnergy ? "&FF0000" : ""), attr->buildEnergy(), cbTemp);
+				_shellIconManager.FormatMessageText( prm.popup,	&cbBuffer, sRequired.c_str(), (noEnergy ? "&FF0000" : ""), attr->buildEnergy(), cbTemp.c_str());
 			} else {
-				_shellIconManager.FormatMessageText(prm.popup, cbBuffer, sRequired.c_str(), (noEnergy ? "&FF0000" : ""), attr->buildEnergy(), ampl ? attr->energyCapacity : attr->MakeEnergy);
+				_shellIconManager.FormatMessageText(prm.popup, &cbBuffer, sRequired.c_str(), (noEnergy ? "&FF0000" : ""), attr->buildEnergy(), ampl ? attr->energyCapacity : attr->MakeEnergy);
 			}
 //		}
 	}
 
 }
-void PopupFormatCore(const AttributeBase* attr, char* cbBuffer, terUnitBase* unit)
+void PopupFormatCore(const AttributeBase* attr, std::string& cbBuffer, terUnitBase* unit)
 {
 	_shellIconManager.FormatMessageText(
 		attr->interfacePrm.popup,
-		cbBuffer,
+		&cbBuffer,
 		"",
 		attr->buildEnergy(),
 		attr->MakeEnergy,
 		(unit && safe_cast<terProtector*>(unit)->canStartField()) ? "&00FF00" : "&FF0000");
 }
-void PopupFormatFrame(const AttributeBase* attr, char* cbBuffer, terUnitBase* unit)
+void PopupFormatFrame(const AttributeBase* attr, std::string& cbBuffer, terUnitBase* unit)
 {
 	int spiralLevel = unit ? static_cast<int>(xm::round(100 * safe_cast<terFrame*>(unit)->spiralLevel() - 0.5f)) : 0;
     spiralLevel = std::max(0, spiralLevel);
 	_shellIconManager.FormatMessageText(
 		attr->interfacePrm.popup,
-		cbBuffer,
+		&cbBuffer,
 		attr->MakeEnergy,
 		attr->energyCapacity,
 		spiralLevel);
 }
-void PopupFormatSquad(const AttributeBase* attr, char* cbBuffer, terUnitBase* unit)
+void PopupFormatSquad(const AttributeBase* attr, std::string& cbBuffer, terUnitBase* unit)
 {
-	static char cbTemp[256];
+	static std::string cbTemp;
 	PopupFormatAttack(attr, cbTemp, false);
 	_shellIconManager.FormatMessageText(
 		attr->interfacePrm.popup,
-		cbBuffer,
+		&cbBuffer,
 		attr->interfaceName(),
-		cbTemp);
+		cbTemp.c_str());
 }
-void PopupFormatMMP(const AttributeBase* attr, char* cbBuffer, terUnitBase* unit) {
+void PopupFormatMMP(const AttributeBase* attr, std::string& cbBuffer, terUnitBase* unit) {
 	_shellIconManager.FormatMessageText(
 		attr->interfacePrm.popup,
-		cbBuffer);
+		&cbBuffer);
 }
-void CShellIconManager::FormatUnitPopup(const AttributeBase* attr, char* cbBuffer, bool onControl, terUnitBase* unit)
+void CShellIconManager::FormatUnitPopup(const AttributeBase* attr, std::string& cbBuffer, bool onControl, terUnitBase* unit)
 {
 	if(strlen(attr->interfacePrm.popup) == 0)
 		return;
 
 	switch(attr->interfacePrm.format_group)
 	{
+    default:
+        break;
 	case POPUP_FORMAT_GUN:
 		PopupFormatBuilding(attr, cbBuffer, onControl, unit, false, true);
 		break;
@@ -2272,13 +2402,11 @@ void CShellIconManager::FormatUnitPopup(const AttributeBase* attr, char* cbBuffe
 		break;
 	}
 
-    if (!strlen(cbBuffer)) {
-        std::string finalPopup = attr->interfaceName();
-        finalPopup += cbBuffer;
-        strcpy(cbBuffer, finalPopup.c_str());
+    if (cbBuffer.empty()) {
+        cbBuffer = attr->interfaceName();
     }
 
-	if (strlen(cbBuffer) && unit && !unit->Player->isWorld()) {
+	if (!cbBuffer.empty() && unit && !unit->Player->isWorld()) {
 //		string finalPopup(qdTextDB::instance().getText("Player"));
 		std::string finalPopup = "[";
         finalPopup += unit->Player->name();
@@ -2313,10 +2441,8 @@ void CShellIconManager::FormatUnitPopup(const AttributeBase* attr, char* cbBuffe
 		}
 
 		finalPopup += "&FFFFFF\n\n";
-		finalPopup += cbBuffer;
-		strcpy(cbBuffer, finalPopup.c_str());
+        cbBuffer = finalPopup + cbBuffer;
 	}
-
 }
 
 void CShellIconManager::draw()
@@ -2336,9 +2462,9 @@ void CShellIconManager::draw()
 		return;
 	}
 
-	if(!mt_interface_quant)
-		return;
-
+	if (!mt_interface_quant || !interfaceShowFlag()) {
+        return;
+    }
 
 	if(getDesktop())
 	{
@@ -2355,8 +2481,21 @@ void CShellIconManager::draw()
 
 		//background
 		CShellWindow* pBackgrnd = GetWnd(SQSH_BACKGRND_ID);
-		if(pBackgrnd)
-			pBackgrnd->draw(false);
+		if (pBackgrnd) {
+            pBackgrnd->draw(false);
+        }
+
+        //Set net info visibility
+        CShellWindow* wnd = GetWnd(SQSH_NET_LATENCY_INFO_ID);
+        if (wnd) {
+            bool visible = false;
+            if (gameShell->getNetClient()) {
+                visible = gameShell->getNetClient()->isGameRun();
+            }
+            if (visible != wnd->isVisible()) {
+                wnd->Show(visible);
+            }
+        }
 
 		DrawControls(m_pDesktop);
 
@@ -2364,11 +2503,11 @@ void CShellIconManager::draw()
 		{
 			if(!_bMenuMode)
 			{
-				static char cbPopupBuffer[2000];
+				static std::string cbPopupBuffer;
 
 				if((GetWnd(SQSH_INFOWND_ID)->state & SQSH_VISIBLE) == 0)
 				{
-					*cbPopupBuffer = 0;
+					cbPopupBuffer.clear();
 
 					if(m_pCtrlHover)
 					{
@@ -2379,25 +2518,25 @@ void CShellIconManager::draw()
 					}
 //					else if(_pUnitHover && (_pUnitHover->playerID() == universe()->activePlayer()->playerID()))
 					else if (_pUnitHover())
-						FormatUnitPopup(&_pUnitHover->attr(), cbPopupBuffer, false, _pUnitHover());
+						FormatUnitPopup(_pUnitHover->attr(), cbPopupBuffer, false, _pUnitHover());
 //					else if(_pShellDispatcher->m_pUnitInfo)
 //						FormatUnitPopup(_pShellDispatcher->m_pUnitInfo, cbPopupBuffer, false, 0);
 
-					if(*cbPopupBuffer)
+					if(!cbPopupBuffer.empty())
 					{
 						terRenderDevice->SetFont(m_hFontPopup);
 
 						Vect2f v1, v2;
-						OutTextRect(0, 0 , cbPopupBuffer, -1, v1, v2);
+						OutTextRect(0, 0 , cbPopupBuffer.c_str(), -1, v1, v2);
 						v2.x += 2;
 
 						int pos_x = terScreenSizeX - (v2.x-v1.x) - 1;
-						int delta_y = absoluteY(nPopupTextPosY + nPopupSY) - (v2.y-v1.y);
+						int delta_y = absoluteUIPosY(nPopupTextPosY + nPopupSY, SHELL_ANCHOR_DEFAULT) - (v2.y-v1.y);
 
 						terRenderDevice->DrawSprite(pos_x - 2, delta_y, v2.x-v1.x + 2, v2.y-v1.y,
 							0, 0, 1, 1, m_hPopupTexture, sColor4c(255,255,255,255));
 
-						terRenderDevice->OutText(pos_x, delta_y, cbPopupBuffer, sColor4f(1, 1, 1, 1), -1);
+						terRenderDevice->OutText(pos_x, delta_y, cbPopupBuffer.c_str(), sColor4f(1, 1, 1, 1), -1);
 						terRenderDevice->SetFont(0);
 
 
@@ -2409,12 +2548,13 @@ void CShellIconManager::draw()
 				}
 
 				if(gameShell->showKeysHelp()){
-					FormatMessageText(gameShell->missionEditor() ? "<mission_editor_help>" : "<keys_help>", cbPopupBuffer);
-					if(gameShell->missionEditor())
-						strcat(cbPopupBuffer, gameShell->missionEditor()->info());
+					FormatMessageText(gameShell->missionEditor() ? "<mission_editor_help>" : "<keys_help>", &cbPopupBuffer);
+					if(gameShell->missionEditor()) {
+                        cbPopupBuffer += gameShell->missionEditor()->info();
+                    }
 					terRenderDevice->SetFont(m_hFontPopup);
                     sColor4f c(1, 1, 1, 1);
-					OutText(10, 30, cbPopupBuffer, &c, -1);
+					OutText(10, 30, cbPopupBuffer.c_str(), &c, -1);
 					terRenderDevice->SetFont(0);
 				}
 				else if(gameShell->missionEditor()){
@@ -2426,37 +2566,51 @@ void CShellIconManager::draw()
 			}
 		}
 		if (!_bMenuMode) {
-			if (gameShell->GameActive && !_bMenuMode && gameShell->getCountDownTime() != "") {
-				terRenderDevice->SetFont(m_hFontCountDownTime);
-                sColor4f c(sqshFontCountDownTimeColor);
-				OutText(absoluteX(countDownTimerX), absoluteY(countDownTimerY), gameShell->getCountDownTime().c_str(), &c, -1);
-				terRenderDevice->SetFont(0);
-			}
+            //Number of base units
+            terRenderDevice->SetFont(m_hFontPopup);
+            static char _cb[256];
+            sprintf(_cb, units.c_str(), m_nTotalUnitsBaseCount, globalAttr().baseUnitsMax);
+            std::string topLine = _cb;
+            Vect2f v1, v2;
+            OutTextRect(0, 0 , topLine.c_str(), -1, v1, v2);
+            float w = v2.x - v1.x;
 
-			if (gameShell->GameActive && !_bMenuMode) {
-				terRenderDevice->SetFont(m_hFontPopup);
-                sColor4f c(1, 1, 1, 1);
-				OutText(absoluteX(totalTimerX), absoluteY(totalTimerY), (totalTime + gameShell->getTotalTime()).c_str(), &c, -1);
-				terRenderDevice->SetFont(0);
-			}
-
-			//общее кол-во базовых юнитов
-			static char _cb[25];
-			sprintf(_cb, units.c_str(), m_nTotalUnitsBaseCount, globalAttr().baseUnitsMax);
-			terRenderDevice->SetFont(m_hFontPopup);
-
-			Vect2f v1, v2;
-			OutTextRect(0, 0 , _cb, -1, v1, v2);
-			float baseUnitsX = absoluteX(nBaseUnitsDisplayX);
-			float baseUnitsY = absoluteY(nBaseUnitsDisplayY);
+            //Render text
+            const float separationX = 30.0f;
+			int baseUnitsX = terRenderDevice->GetSizeX() - w - separationX;
+			int baseUnitsY = absoluteUISizeY(scripts_export::gameTopEdge, SHELL_ANCHOR_RIGHT);
             sColor4f c(1, 1, 1, 1);
-			OutText(baseUnitsX, baseUnitsY, _cb, &c, -1);
-			terRenderDevice->SetFont(0);
+			OutText(baseUnitsX, baseUnitsY, topLine.c_str(), &c, -1);
 
-			Vect2f va(baseUnitsX - 2, baseUnitsY - 2);
-			Vect2f vb(va.x + v2.x-v1.x + 2, va.y + v2.y-v1.y + 2);
+            //Render rect
+            const float margin = 3;
+            Vect2f va(baseUnitsX - margin, baseUnitsY - margin);
+			Vect2f vb(va.x + w + margin * 2, va.y + v2.y-v1.y + margin * 2);
+			draw_rect_empty(va, vb, c);
 
-			draw_rect_empty(va, vb, sColor4f(1, 1, 1, 1));
+            if (gameShell->GameActive) {
+                //Draw countdown
+                if (!gameShell->getCountDownTime().empty()) {
+                    terRenderDevice->SetFont(m_hFontCountDownTime);
+                    sColor4f c(sqshFontCountDownTimeColor);
+                    OutText(
+                        absoluteUIPosX(countDownTimerX, SHELL_ANCHOR_RIGHT),
+                        absoluteUIPosY(countDownTimerY, SHELL_ANCHOR_RIGHT),
+                        gameShell->getCountDownTime().c_str(),
+                        &c,
+                        -1
+                    );
+                }
+
+                //Add total time
+                terRenderDevice->SetFont(m_hFontPopup);
+                topLine = totalTime + gameShell->getTotalTime();
+                OutTextRect(0, 0 , topLine.c_str(), -1, v1, v2);
+                baseUnitsX -= v2.x - v1.x + separationX;
+                OutText(baseUnitsX, baseUnitsY, topLine.c_str(), &c, -1);
+            }
+            
+            terRenderDevice->SetFont(0);
 		}
 
 	} else if (m_pDesktop) {
@@ -2522,8 +2676,6 @@ void CShellIconManager::draw()
 		}
 
 	}
-
-	_shellCursorManager.draw();
 }
 
 void CShellIconManager::forceDraw() {
@@ -2562,7 +2714,7 @@ float GetUnitBuildProgress(terUnitBase* p) {
 	return res > 0 ? res : FLT_EPS;
 }
 
-float GetUnitUpgradeProgress(terBuilding* p) {
+float GetUnitUpgradeProgress(const terBuilding* p) {
 	if(p->isConstructed())
 		return 1.0f;
 
@@ -2573,7 +2725,7 @@ float GetUnitUpgradeProgress(terBuilding* p) {
 
 void CShellIconManager::changeControlState(const std::vector<SaveControlData>& newControlStates, bool reset_controls) {
     //Get the base content and if is a campaign
-    bool isCampaign = 0 < gameShell->CurrentMission.missionNumber;
+    bool isCampaign = gameShell->CurrentMission.isCampaign();
     GAME_CONTENT content = static_cast<GAME_CONTENT>(gameShell->CurrentMission.gameContent.value());
     if (!content) content = isCampaign ? getGameContentCampaign() : terGameContentSelect;
     
@@ -2839,7 +2991,7 @@ void CShellIconManager::UpdateIcons()
 	if(_bDebugDisplayAllIcons)
 		return;
 
-	if(!getDesktop() || _bMenuMode)
+	if (!getDesktop() || _bMenuMode || !interfaceShowFlag())
 		return;
 
 //	if(!universe()->activePlayer())
@@ -3084,10 +3236,10 @@ inline void CheckBuildingPowerButton(terUnitBase* pUnit)
 	CShellComplexPushButton* pBtnOn = (CShellComplexPushButton*)_shellIconManager.GetWnd(SQSH_SELPANEL_POWERON_ID);
 	CShellComplexPushButton* pBtnOff = (CShellComplexPushButton*)_shellIconManager.GetWnd(SQSH_SELPANEL_POWEROFF_ID);
 	if (pBtnOn && pBtnOff) {
-		pBtnOn->Show(TRUE);
-		pBtnOff->Show(TRUE);
-		pBtnOn->Enable(pUnit == 0 ? TRUE : (!pUnit->isBuildingPowerOn()));
-		pBtnOff->Enable(pUnit == 0 ? TRUE : (pUnit->isBuildingPowerOn()));
+		pBtnOn->Show(true);
+		pBtnOff->Show(true);
+		pBtnOn->Enable(pUnit == 0 ? true : (!pUnit->isBuildingPowerOn()));
+		pBtnOff->Enable(pUnit == 0 ? true : (pUnit->isBuildingPowerOn()));
 	}
 }
 
@@ -3095,28 +3247,28 @@ void CShellIconManager::ShowActionIcons(const UnitInterfacePrm& intf_prm, const 
 {
 	CShellComplexPushButton* pBtn;
 
-#define SHOW_ICON_IF(cond, enbl, id)  if(cond){pBtn = (CShellComplexPushButton*)GetWnd(id); if(pBtn){ pBtn->Show(TRUE); pBtn->Enable(enbl);}}
-#define SHOW_ICON_IF2(cond, enbl, id)  if(cond){pBtn = (CShellComplexPushButton*)GetWnd(id); if(pBtn){ pBtn->Show(TRUE); pBtn->Enable(enbl || pBtn->GetCheck());}}
+#define SHOW_ICON_IF(cond, enbl, id)  if(cond){pBtn = (CShellComplexPushButton*)GetWnd(id); if(pBtn){ pBtn->Show(true); pBtn->Enable(enbl);}}
+#define SHOW_ICON_IF2(cond, enbl, id)  if(cond){pBtn = (CShellComplexPushButton*)GetWnd(id); if(pBtn){ pBtn->Show(true); pBtn->Enable(enbl || pBtn->GetCheck());}}
 
 //	bool bShowAttack = actions.op_attack && pUnit->isBuildingPowerOn() && pUnit->CanBuildingEnable();
 
-	SHOW_ICON_IF(actions.op_move,   TRUE, SQSH_SELPANEL_MOVE_ID);
-	SHOW_ICON_IF(actions.op_stop,   TRUE, SQSH_SELPANEL_STOP_ID);
-	SHOW_ICON_IF(actions.op_stop2,  TRUE, SQSH_SELPANEL_STOP2_ID);
-	SHOW_ICON_IF(actions.op_attack,	TRUE, SQSH_SELPANEL_SQ_ATTACK_ID);
-	SHOW_ICON_IF(actions.op_back,   TRUE, SQSH_SELPANEL_SQ_BACK_ID);
-	SHOW_ICON_IF(actions.op_offdeff,TRUE, SQSH_SELPANEL_SQ_OFDEF_ID);
-	SHOW_ICON_IF(actions.op_patrol, TRUE, SQSH_SELPANEL_SQ_PATROL_ID);
-	SHOW_ICON_IF(actions.op_sell,   TRUE, SQSH_SELPANEL_SELL_ID);
-	SHOW_ICON_IF(actions.op_install,TRUE, SQSH_SELPANEL_FRAME_INSTALL_ID);
-	SHOW_ICON_IF(actions.op_teleportate,TRUE, SQSH_SELPANEL_FRAME_TELEPORTATE_ID);
-	SHOW_ICON_IF(actions.op_alarm,  TRUE, SQSH_SELPANEL_FRAME_ALARM_ID);
-	SHOW_ICON_IF(actions.op_brig_back, TRUE, SQSH_SELPANEL_BRIG_BACK_ID);
-	SHOW_ICON_IF(actions.op_brig_change,TRUE, SQSH_SELPANEL_BRIG_CHANGE_ID);
-	SHOW_ICON_IF(actions.op_brig_build, TRUE, SQSH_SELPANEL_BRIG_BUILD_ID);
+	SHOW_ICON_IF(actions.op_move,   true, SQSH_SELPANEL_MOVE_ID);
+	SHOW_ICON_IF(actions.op_stop,   true, SQSH_SELPANEL_STOP_ID);
+	SHOW_ICON_IF(actions.op_stop2,  true, SQSH_SELPANEL_STOP2_ID);
+	SHOW_ICON_IF(actions.op_attack,	true, SQSH_SELPANEL_SQ_ATTACK_ID);
+	SHOW_ICON_IF(actions.op_back,   true, SQSH_SELPANEL_SQ_BACK_ID);
+	SHOW_ICON_IF(actions.op_offdeff,true, SQSH_SELPANEL_SQ_OFDEF_ID);
+	SHOW_ICON_IF(actions.op_patrol, true, SQSH_SELPANEL_SQ_PATROL_ID);
+	SHOW_ICON_IF(actions.op_sell,   true, SQSH_SELPANEL_SELL_ID);
+	SHOW_ICON_IF(actions.op_install,true, SQSH_SELPANEL_FRAME_INSTALL_ID);
+	SHOW_ICON_IF(actions.op_teleportate,true, SQSH_SELPANEL_FRAME_TELEPORTATE_ID);
+	SHOW_ICON_IF(actions.op_alarm,  true, SQSH_SELPANEL_FRAME_ALARM_ID);
+	SHOW_ICON_IF(actions.op_brig_back, true, SQSH_SELPANEL_BRIG_BACK_ID);
+	SHOW_ICON_IF(actions.op_brig_change,true, SQSH_SELPANEL_BRIG_CHANGE_ID);
+	SHOW_ICON_IF(actions.op_brig_build, true, SQSH_SELPANEL_BRIG_BUILD_ID);
 	SHOW_ICON_IF(actions.op_upgrade && pUnit->isBuildingPowerOn() && pUnit->CanBuildingEnable(), 
 		safe_cast<terBuilding*>(pUnit)->canUpgrade(), intf_prm.upgrade_button_id);
-	SHOW_ICON_IF(actions.op_charging, TRUE, SQSH_SELPANEL_UNIT_CHARGE_ID);
+	SHOW_ICON_IF(actions.op_charging, true, SQSH_SELPANEL_UNIT_CHARGE_ID);
 
 	updateButtonLabel(intf_prm.upgrading_button_id, 0, 0, false, true);
 	updateButtonLabel(intf_prm.upgrade_button_id, 0, 0, false, true);
@@ -3127,7 +3279,7 @@ void CShellIconManager::ShowActionIcons(const UnitInterfacePrm& intf_prm, const 
 	if (actions.op_power_onoff && pUnit->CanBuildingEnable()) {
 		CShellComplexPushButton* pBtnOn = (CShellComplexPushButton*)_shellIconManager.GetWnd(SQSH_SELPANEL_POWERON_ID);
 		if (pBtnOn) {
-			pBtnOn->Show(TRUE);
+			pBtnOn->Show(true);
 			bool powerOn = false;
 			CSELECT_AUTOLOCK();
 			const UnitList& selList=universe()->select.GetSelectList();
@@ -3147,8 +3299,8 @@ void CShellIconManager::ShowActionIcons(const UnitInterfacePrm& intf_prm, const 
 	{
 		CShellComplexPushButton* pBtnOn = (CShellComplexPushButton*)GetWnd(SQSH_SELPANEL_FIELDON_ID);
 		CShellComplexPushButton* pBtnCharge = (CShellComplexPushButton*)GetWnd(SQSH_SELPANEL_START_CHARGE_ID);
-		pBtnOn->Show(TRUE);
-		pBtnCharge->Show(TRUE);
+		pBtnOn->Show(true);
+		pBtnCharge->Show(true);
 		bool fieldOn = false;
 		bool fieldOff = false;
 		bool chargeDisabled = false;
@@ -3181,7 +3333,7 @@ void CShellIconManager::ShowActionIcons(const UnitInterfacePrm& intf_prm, const 
 
 	if (actions.op_offdeff) {
 		CShellComplexPushButton* pBtnOffDef = (CShellComplexPushButton*)GetWnd(SQSH_SELPANEL_SQ_OFDEF_ID);
-		pBtnOffDef->Show(TRUE);
+		pBtnOffDef->Show(true);
 		pBtnOffDef->SetCheck(true);
 		CSELECT_AUTOLOCK();
 		//!!! В SelectList не обязательно сквад !!!
@@ -3297,21 +3449,21 @@ void CShellIconManager::UpdateActionStatus(terUnitBase* pUnit)
 //		pBtn->SetCheck(safe_cast<terUnitSquad*>(pUnit)->GetInterfaceOffensiveMode() == 0);
 //	}
 }
-void CShellIconManager::ShowUpgradeBuildProcessIcons(terUnitBase* pUnit)
+void CShellIconManager::ShowUpgradeBuildProcessIcons(const terUnitBase* pUnit)
 {
-	if(pUnit->attr().ID == UNIT_ATTRIBUTE_TERRAIN_MASTER ||
-		pUnit->attr().ID == UNIT_ATTRIBUTE_BUILD_MASTER)
+	if(pUnit->attr()->ID == UNIT_ATTRIBUTE_TERRAIN_MASTER ||
+		pUnit->attr()->ID == UNIT_ATTRIBUTE_BUILD_MASTER)
 		return;
 
-	if (pUnit->attr().isUpgrade || pUnit->attr().ID == UNIT_ATTRIBUTE_CORRIDOR_OMEGA)	{
-		GetWnd(pUnit->attr().interfacePrm.upgrading_button_id)->Enable(FALSE);
-		_shellIconManager.GetWnd(SQSH_SELPANEL_SELL_ID)->Show(pUnit->attr().ID != UNIT_ATTRIBUTE_CORRIDOR_OMEGA);
-		_shellIconManager.GetWnd(pUnit->attr().interfacePrm.upgrading_button_id)->Show(TRUE);
-		terBuilding* b = safe_cast<terBuilding*>(pUnit);
-		updateButtonLabel(pUnit->attr().interfacePrm.upgrading_button_id, 0, GetUnitUpgradeProgress(b), b->buildingStatus() & BUILDING_STATUS_HOLD_CONSTRUCTION, true);
+	if (pUnit->attr()->isUpgrade || pUnit->attr()->ID == UNIT_ATTRIBUTE_CORRIDOR_OMEGA)	{
+		GetWnd(pUnit->attr()->interfacePrm.upgrading_button_id)->Enable(false);
+		_shellIconManager.GetWnd(SQSH_SELPANEL_SELL_ID)->Show(pUnit->attr()->ID != UNIT_ATTRIBUTE_CORRIDOR_OMEGA);
+		_shellIconManager.GetWnd(pUnit->attr()->interfacePrm.upgrading_button_id)->Show(true);
+		const terBuilding* b = safe_cast<const terBuilding*>(pUnit);
+		updateButtonLabel(pUnit->attr()->interfacePrm.upgrading_button_id, 0, GetUnitUpgradeProgress(b), b->buildingStatus() & BUILDING_STATUS_HOLD_CONSTRUCTION, true);
 	} else {
 		ShellControlID ids[] = { SQSH_SELPANEL_SELL_ID };
-		ShowControls(TRUE, ids, sizeof(ids)/sizeof(ShellControlID));
+		ShowControls(true, ids, sizeof(ids)/sizeof(ShellControlID));
 	}
 }
 
@@ -3337,12 +3489,12 @@ void CShellIconManager::UpdateSelectionIcons()
 		SQSH_SELPANEL_UPGRADE_EMPIRE1_ID,SQSH_SELPANEL_UPGRADE_EMPIRE2_ID,
 		SQSH_SELPANEL_UPGRADE_HARKBACK1_ID,SQSH_SELPANEL_UPGRADE_HARKBACK2_ID };
 
-	ShowControls(FALSE, ids, sizeof(ids)/sizeof(ShellControlID));
+	ShowControls(false, ids, sizeof(ids)/sizeof(ShellControlID));
 
 	const UnitInterfacePrm* unit_prm = 0;
 	UnitInterfaceActions    actions;
 
-	terUnitBase*          pUnit = 0;
+	terUnitBase*          pUnit = nullptr;
 	const AttributeBase* attr = 0;
 
 	actions.set();
@@ -3355,10 +3507,9 @@ void CShellIconManager::UpdateSelectionIcons()
 		if(list_units.empty())
 			return;
 
-		FOR_EACH(list_units, i_unit)
-		{
-			pUnit = *i_unit;
-			attr = &(pUnit->attr());
+		for (terUnitBase* unit : list_units) {
+            pUnit = unit;
+			attr = pUnit->attr();
 
 	/*		if(framePowered_)
 			{
@@ -3373,16 +3524,16 @@ void CShellIconManager::UpdateSelectionIcons()
 			{
 				if(attr->interfacePrm.actions.op_sell){
 					ShellControlID ids[] = { SQSH_SELPANEL_SELL_ID };
-					ShowControls(TRUE, ids, sizeof(ids)/sizeof(ShellControlID));
+					ShowControls(true, ids, sizeof(ids)/sizeof(ShellControlID));
 				}
 			}
 	*/
 
-			switch(pUnit->attr().ID)
+			switch(pUnit->attr()->ID)
 			{
 			case UNIT_ATTRIBUTE_SQUAD:
 				{
-					terUnitSquad* sq = safe_cast<terUnitSquad*>(pUnit);
+					const terUnitSquad* sq = safe_cast<const terUnitSquad*>(pUnit);
 					if(sq->Empty())
 					{
 						attr = 0;
@@ -3411,8 +3562,9 @@ void CShellIconManager::UpdateSelectionIcons()
 				break;
 
 			case UNIT_ATTRIBUTE_FRAME:
-				if(safe_cast<terFrame*>(pUnit)->frameStatus() == terFrame::MOBILE)
-					unit_prm = &interface_frame_uninstalled;
+				if(safe_cast<const terFrame*>(pUnit)->frameStatus() == terFrame::MOBILE) {
+                    unit_prm = &interface_frame_uninstalled;
+                }
 
 				if (pUnit != universe()->activePlayer()->frame()) {
 					unit_prm = 0;
@@ -3655,9 +3807,9 @@ void CShellIconManager::UpdateSquadIcons()
         bool disableTogetherBtn = false;
         bool showTogetherBtn = false;
 		if (	(_pShellDispatcher->GetSelectedUnitsCount() > 1) && 
-				(_pShellDispatcher->GetSelectedUnit()->attr().ID == UNIT_ATTRIBUTE_SQUAD)
+				(_pShellDispatcher->GetSelectedUnit()->attr()->ID == UNIT_ATTRIBUTE_SQUAD)
 			) {
-			terUnitBase* b = _pShellDispatcher->GetSelectedUnit();
+			//terUnitBase* b = _pShellDispatcher->GetSelectedUnit();
 
 			CUITabSheet* pSquadSheet = (CUITabSheet*)GetWnd(SQSH_TAB_SQUAD_ID);
 			int nActivePage = pSquadSheet->GetActivePage();
@@ -3668,7 +3820,7 @@ void CShellIconManager::UpdateSquadIcons()
 				const UnitList& selList=universe()->select.GetSelectList();
 				UnitList::const_iterator selIt;
 				for (selIt = selList.begin(); selIt != selList.end(); selIt++) {
-					b = *selIt;
+					//b = *selIt;
 					terUnitSquad* sq = (terUnitSquad*)(*selIt);
 					if (!sq->Empty()) {
                         if (!sq->mutationFinished()) {
@@ -3759,25 +3911,13 @@ void CShellIconManager::ClearSquadIconTable()
 }
 
 bool CtrlAction::actionPerformed() {
-	CShellWindow* wnd = _shellIconManager.GetWnd(controlID);
-	if (wnd) {
-		return wnd->actionPerformed( action.code, action.param );
-	}
+    if (_shellIconManager.IsInterface()) {
+        CShellWindow* wnd = _shellIconManager.GetWnd(controlID);
+        if (wnd) {
+            return wnd->actionPerformed(action.code, action.param);
+        }
+    }
 	return false;
-}
-
-void HotKeyManager::keyPressed(int key) {
-	float currTime = frame_time();
-	for (int i = 0, s = hotKeys.size(); i < s; i++) {
-		if ( checkHotKey(hotKeys[i], key, currTime) ) {
-			if (actions[ hotKeys[i].actionNumber ]->actionPerformed()) {
-				gameShell->updatePosition();
-				break;
-			}
-		}
-	}
-	lastKey = key;
-	lastKeyTime = currTime;
 }
 
 void LogicUpdater::updateIconsData() {
@@ -4071,7 +4211,7 @@ void LogicUpdater::updateSlotsData() {
 
 			slotData->unit = (terUnitReal*) units[i];
 			slotData->productionPhase = phase[i] / 100.0f;
-			slotData->isBrig = !units[i] || (units[i]->attr().ID == UNIT_ATTRIBUTE_BUILD_MASTER);
+			slotData->isBrig = !units[i] || (units[i]->attr()->ID == UNIT_ATTRIBUTE_BUILD_MASTER);
 			slotData->enabled = (id[i] < 0) || units[i];
 			slotData->isInChanging = units[i] && (units[i]->GetInterfaceLegionMode() & INTERFACE_LEGION_MODE_EXCHANGE);
 			slotData->requestedAttr = id[i];
@@ -4405,18 +4545,18 @@ void LogicUpdater::updateMiniMap() {
 					color = player->unitColor();
 					pos = (*ui)->position2D();
 				} else if (	(unitClass & (UNIT_CLASS_AIR_FILTH | UNIT_CLASS_GROUND_FILTH | UNIT_CLASS_UNDERGROUND_FILTH) ) 
-							&& (*ui)->attr().ID != UNIT_ATTRIBUTE_FILTH_VOLCANO
+							&& (*ui)->attr()->ID != UNIT_ATTRIBUTE_FILTH_VOLCANO
 							) {
 					color = filthMapColor;
 					pos = (*ui)->position2D();
 				} else if ( unitClass & UNIT_CLASS_CORRIDOR && !(*ui)->isUnseen()) {
 					color = player->unitColor();
 					pos = (*ui)->position2D();
-					if ((*ui)->attr().ID == UNIT_ATTRIBUTE_CORRIDOR_ALPHA) {
+					if ((*ui)->attr()->ID == UNIT_ATTRIBUTE_CORRIDOR_ALPHA) {
 						safe_cast<terCorridorAlpha*>(*ui)->putPath(logicData->alphaPath);
 					}
 				} else {
-					switch ((*ui)->attr().ClassID) {
+					switch ((*ui)->attr()->ClassID) {
 						case UNIT_CLASS_ID_TERRAIN_MASTER:
 						case UNIT_CLASS_ID_BUILD_MASTER:
 							color = player->unitColor();

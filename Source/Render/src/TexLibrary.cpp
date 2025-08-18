@@ -2,7 +2,17 @@
 #include "FileImage.h"
 #include "files/files.h"
 
+#ifdef PERIMETER_D3D9
+#ifdef _WIN32
 #include "ddraw.h"
+#endif
+#include "D3DRender.h"
+#endif //PERIMETER_D3D9
+
+#ifdef PERIMETER_SOKOL
+#include "sokol/SokolIncludes.h"
+#include "sokol/SokolResources.h"
+#endif //PERIMETER_SOKOL
 
 #ifdef TEXTURE_NOTFREE
 struct BeginNF
@@ -17,11 +27,11 @@ struct BeginNF
 	}
 };
 static BeginNF begin_nf;
-#endif
+#endif //TEXTURE_NOTFREE
 
 cTexLibrary* GetTexLibrary()
 {
-	return &gb_RenderDevice->TexLibrary;
+	return gb_RenderDevice->GetTexLibrary();
 }
 
 cTexLibrary::cTexLibrary()
@@ -67,11 +77,11 @@ void cTexLibrary::FreeOne(FILE* f)
 		}else
 		{
 //			VISASSERT(p->GetRef()==1);
-			if(f)fprintf(f,"%s - %i\n",p->GetName(),p->GetRef());
+			if (f) fprintf(f,"%s - %" PRIi64 "\n",p->GetName().c_str(),p->GetRef());
 		}
 	}
 
-	if(f)fprintf(f,"Texture free %i, not free %i\n",compacted,textures.size()-compacted);
+	if(f)fprintf(f,"Texture free %i, not free %" PRIsize "\n",compacted,textures.size()-compacted);
 
 	if(f)
 	{
@@ -97,7 +107,7 @@ cTexture* cTexLibrary::CreateRenderTexture(int width, int height, uint32_t attr,
 	MTAuto mtenter(&lock);
 	if(!attr)
 		attr=TEXTURE_RENDER16;
-	attr|=TEXTURE_D3DPOOL_DEFAULT;
+	attr|=TEXTURE_POOL_DEFAULT;
 	cTexture *Texture=new cTexture("");
 	Texture->New(1);
 	Texture->SetTimePerFrame(0);	
@@ -106,7 +116,7 @@ cTexture* cTexLibrary::CreateRenderTexture(int width, int height, uint32_t attr,
 	Texture->SetNumberMipMap(1);
 	Texture->SetAttribute(attr);
 
-	int err=gb_RenderDevice->CreateTexture(Texture,NULL,-1,-1,enable_assert);
+	int err=gb_RenderDevice->CreateTexture(Texture,NULL,enable_assert);
 	if(err) { Texture->Release(); return 0; }
 	textures.push_back(Texture); Texture->IncRef();
 	return Texture;
@@ -120,14 +130,14 @@ cTexture* cTexLibrary::CreateTexture(int sizex,int sizey,bool alpha,bool default
 	if(alpha)
 		Texture->SetAttribute(TEXTURE_ALPHA_BLEND);
 	if(default_pool)
-		Texture->SetAttribute(TEXTURE_D3DPOOL_DEFAULT);
+		Texture->SetAttribute(TEXTURE_POOL_DEFAULT);
 
-	Texture->BitMap.resize(1);
-	Texture->BitMap[0]=0;
+	Texture->frames.resize(1);
+	Texture->frames[0].ptr=nullptr;
 	Texture->SetWidth(sizex);
 	Texture->SetHeight(sizey);
 
-	if(gb_RenderDevice->CreateTexture(Texture,NULL,-1,-1))
+	if(gb_RenderDevice->CreateTexture(Texture,NULL))
 	{
 		delete Texture;
 		return NULL;
@@ -146,7 +156,7 @@ cTexture* cTexLibrary::CreateTexture(int sizex,int sizey,bool alpha)
 	return CreateTexture(sizex,sizey,alpha,false);
 }
 
-cTexture* cTexLibrary::GetElementAviScale(const char* TextureName,char *pMode)
+cTexture* cTexLibrary::GetElementAviScale(const char* TextureName,const char *pMode)
 {
 	MTAuto mtenter(&lock);
 	if(TextureName==0||TextureName[0]==0) return 0; // имя текстуры пустое
@@ -156,7 +166,7 @@ cTexture* cTexLibrary::GetElementAviScale(const char* TextureName,char *pMode)
 		cTexture* cur=GetTexture(i);
 		xassert(cur->GetX()>=0 && cur->GetX()<=15);
 		xassert(cur->GetY()>=0 && cur->GetY()<=15);
-		if( cur && stricmp(cur->GetName(),TextureName)==0)
+		if( cur && stricmp(cur->GetName().c_str(),TextureName)==0)
 		{
 			cur->IncRef();
 			return cur;
@@ -174,7 +184,7 @@ cTexture* cTexLibrary::GetElementAviScale(const char* TextureName,char *pMode)
 	Texture->New(1);
 	Texture->Init(avi_images.GetFramesCount(), avi_images.GetXFrame(), avi_images.GetYFrame(), avi_images.GetX(), avi_images.GetY());
 	Texture->SetTimePerFrame(0);
-	if (gb_VisGeneric->GetRenderDevice()->CreateTexture(Texture,&avi_images,-1,-1)!=0)
+	if (gb_VisGeneric->GetRenderDevice()->CreateTexture(Texture,&avi_images)!=0)
 	{
 		delete Texture;
 		return NULL;
@@ -184,7 +194,7 @@ cTexture* cTexLibrary::GetElementAviScale(const char* TextureName,char *pMode)
 	return Texture;
 }
 
-cTexture* cTexLibrary::GetElement(const char* TextureName,char *pMode)
+cTexture* cTexLibrary::GetElement(const char* TextureName,const char *pMode)
 {
 	MTAuto mtenter(&lock);
 	if(TextureName==nullptr||TextureName[0]==0) return nullptr; // имя текстуры пустое
@@ -193,10 +203,11 @@ cTexture* cTexLibrary::GetElement(const char* TextureName,char *pMode)
 	for(int i=0;i<GetNumberTexture();i++)
 	{
 		cTexture* cur=GetTexture(i);
-		xassert(cur->GetX()>=0 && cur->GetX()<=15);
-		xassert(cur->GetY()>=0 && cur->GetY()<=15);
-		if( cur && stricmp(cur->GetName(),path.c_str())==0)
+		xassert(cur);
+		if( cur && stricmp(cur->GetName().c_str(),path.c_str())==0)
 		{
+			xassert(cur->GetX() >= 0 && cur->GetX() <= 15);
+			xassert(cur->GetY() >= 0 && cur->GetY() <= 15);
 			cur->IncRef();
 			return cur;
 		}
@@ -204,7 +215,7 @@ cTexture* cTexLibrary::GetElement(const char* TextureName,char *pMode)
 
 	cTexture *Texture=new cTexture(path.c_str());
 
-	if(!LoadTexture(Texture,pMode,Vect2f(1.0f,1.0f)))
+	if(!LoadTexture(Texture,pMode))
 	{
 		return nullptr;
 	}
@@ -213,75 +224,7 @@ cTexture* cTexLibrary::GetElement(const char* TextureName,char *pMode)
 	return Texture;
 }
 
-cTexture* cTexLibrary::GetElementColor(const char *TextureName,sColor4c color,char *pMode)
-{
-	MTAuto mtenter(&lock);
-	if(TextureName==0||TextureName[0]==0) return 0; // имя текстуры пустое
-	xassert(color.a==0 || color.a==255);
-	if(color.a==0)
-	{//Без Skin color
-		color.set(255,255,255,0);
-	}
-
-	for(int i=0;i<GetNumberTexture();i++)
-	{
-		cTexture* cur=GetTexture(i);
-		xassert(cur->GetX()>=0 && cur->GetX()<=15);
-		xassert(cur->GetY()>=0 && cur->GetY()<=15);
-		if( cur && stricmp(cur->GetName(),TextureName)==0 && 
-			cur->skin_color.RGBA()==color.RGBA())
-		{
-			cur->IncRef();
-			return cur;
-		}
-	}
-
-	cTexture *Texture=new cTexture(TextureName);
-	Texture->skin_color=color;
-
-	if(!LoadTexture(Texture,pMode,Vect2f(1.0f,1.0f)))
-	{
-		return NULL;
-	}
-
-	textures.push_back(Texture); Texture->IncRef();
-	return Texture;
-}
-
-cTextureScale* cTexLibrary::GetElementScale(const char *TextureName,Vect2f scale)
-{
-	MTAuto mtenter(&lock);
-	if(TextureName==0||TextureName[0]==0) return 0; // имя текстуры пустое
-	cTextureScale* Texture=NULL;
-
-	for(int i=0;i<GetNumberTexture();i++)
-	{
-		cTexture* cur=GetTexture(i);
-		if(!cur)
-			continue;
-
-		if( cur->IsScaleTexture() && stricmp(cur->GetName(),TextureName)==0)
-		{
-			cur->IncRef();
-			Texture=(cTextureScale*)cur;
-			if((Texture->GetCreateScale()-scale).norm2()<1e-8f)
-				return Texture;
-		}
-	}
-
-	if(!Texture)
-		Texture=new cTextureScale(TextureName);
-	else
-		gb_RenderDevice->DeleteTexture(Texture);
-
-	if(!LoadTexture(Texture,"NoMipMap NoBlur",scale))
-		return NULL;
-
-	textures.push_back(Texture); Texture->IncRef();
-	return Texture;
-}
-
-bool cTexLibrary::LoadTexture(cTexture* Texture,char *pMode,Vect2f kscale)
+bool cTexLibrary::LoadTexture(cTexture* Texture,const char *pMode)
 {
 	// тест наличия текстуры
 	if(pMode&&strstr((char*)pMode,"NoMipMap"))
@@ -289,24 +232,20 @@ bool cTexLibrary::LoadTexture(cTexture* Texture,char *pMode,Vect2f kscale)
 	else 
 		Texture->SetNumberMipMap(Option_MipMapLevel);
 
-	if(Option_MipMapBlur && pMode)
-	if(strstr(pMode,"MipMapBlur") && strstr(pMode,"MipMapNoBlur")==0)
+	if(Option_MipMapBlur && pMode && strstr(pMode,"MipMapBlur") && strstr(pMode,"MipMapNoBlur")==0)
 	{
 		Texture->SetAttribute(TEXTURE_MIPMAPBLUR);
 		if(pMode&&strstr(pMode,"MipMapBlurWhite")) 
 			Texture->SetAttribute(TEXTURE_BLURWHITE);
 	}
 
-	if(pMode)
-	{
-		if(strstr(pMode,"UVBump"))
-		{
-			Texture->SetAttribute(TEXTURE_UVBUMP);
-		}
-	}
+	if(pMode && strstr(pMode, "UVBump")) {
+        Texture->SetAttribute(TEXTURE_UVBUMP);
+    }
 
-    if(pMode&&strstr(pMode,"Bump")) {
+    if(pMode&&strstr(pMode,"Bump")) {        
         Texture->SetAttribute(MAT_BUMP);
+        Texture->bump_scale = current_bump_scale;
         
         //If file with _normal name is found, set attribute for normal
         std::string textpathstr = convert_path_content(Texture->GetName());
@@ -327,18 +266,27 @@ bool cTexLibrary::LoadTexture(cTexture* Texture,char *pMode,Vect2f kscale)
     if(pMode&&strstr(pMode,"Normal"))
         Texture->SetAttribute(MAT_NORMAL);
 
-	return ReLoadTexture(Texture,kscale);
+	return ReLoadTexture(Texture);
 }
 
-bool cTexLibrary::ReLoadTexture(cTexture* Texture,Vect2f kscale)
+bool cTexLibrary::ReLoadTexture(cTexture* Texture)
 {
 	{
-		std::vector<IDirect3DTexture9*>::iterator it;
-		FOR_EACH(Texture->BitMap,it)
+		for (auto frame : Texture->frames)
 		{
-			(*it)->Release();
+#ifdef PERIMETER_D3D9
+            if (gb_RenderDevice->GetRenderSelection() == DEVICE_D3D9) {
+                frame.d3d->Release();
+            }
+#endif
+#ifdef PERIMETER_SOKOL
+            if (gb_RenderDevice->GetRenderSelection() == DEVICE_SOKOL) {
+                delete frame.sg;
+            }
+#endif
+            frame.ptr = nullptr;
 		}
-		Texture->BitMap.clear();
+		Texture->frames.clear();
 	}
 		
 	bool bump=Texture->GetAttribute(MAT_BUMP)?true:false;
@@ -346,86 +294,56 @@ bool cTexLibrary::ReLoadTexture(cTexture* Texture,Vect2f kscale)
 
 	if(bump && !pos_bump)
 	{
+#if 0 //#ifdef PERIMETER_D3D9
+        //TODO what is this? is even need?
 		//Эта текстура никогда не должна использоваться, make small texture.
 		cTexture* pMini=GetElement("RESOURCE\\Models\\Main\\TEXTURES\\028r.tga");
-		if(pMini)
+		if(pMini && !pMini->frames.empty() && pMini->frames.front().d3d)
 		{
-			Texture->BitMap.push_back(pMini->BitMap.front());
-			Texture->BitMap[0]->AddRef();
+			Texture->frames.push_back(pMini->frames.front());
+			Texture->frames[0].d3d->AddRef();
 		}
 		RELEASE(pMini);
+#endif
 		return true;
 	}
-/*
-	if(Option_FavoriteLoadDDS && !bump && !Texture->IsScaleTexture())
-	{
-		char drive[_MAX_DRIVE];
-		char dir[_MAX_DIR];
-		char fname[_MAX_FNAME];
-		char ext[_MAX_EXT];
-		_splitpath( Texture->GetName(), drive, dir, fname, ext );
-
-		char path_buffer[MAX_PATH];
-		_makepath(path_buffer, drive, dir, fname, "dds" );
-
-		void* buf;
-		int size;
-		//0 - alpha_none, 1- alpha_test, 2 - alpha_blend
-		int ret=ResourceFileRead(path_buffer,buf,size);///Утечка памяти
-		if(!ret)
-		{
-			BYTE alpha_type=((BYTE*)buf)[size-1];
-			switch(alpha_type)
-			{
-			case 0:
-				break;
-			case 1:
-				Texture->SetAttribute(TEXTURE_ALPHA_TEST);
-				break;
-			case 2:
-				Texture->SetAttribute(TEXTURE_ALPHA_BLEND);
-				break;
-			default:
-				//Неправильный dds файл. В конце должен быть байт с alpha.
-				Error(Texture);
-				Texture->Release();
-				return false;
-			}
-
-			LPDIRECT3DTEXTURE9 pTexture=gb_RenderDevice->CreateTextureFromMemory(buf,size-1);
-			if(!pTexture)
-			{
-				Error(Texture);
-				Texture->Release();
-				return false;
-			}
-
-			D3DSURFACE_DESC desc;
-			RDCALL(pTexture->GetLevelDesc(0,&desc));
-			Texture->SetWidth(desc.Width);
-			Texture->SetHeight(desc.Height);
-
-			Texture->BitMap.push_back(pTexture);
-			return true;
-		}
-	}
-*/
-	cFileImage *FileImage=nullptr;
-
+    
 	//Get path for file and open it
-	std::string path = convert_path_content(Texture->GetName());
-	if (path.empty()) {
-        path = Texture->GetName();
-        if (endsWith(path, ".avi") && !convert_path_content(path + "x").empty()) {
-            //Use AVIX if available when AVI is absent
-            path += "x";
+    std::string path = Texture->GetName();
+    if (get_content_entry(path)) {
+        path = convert_path_content(path);
+    } else {
+        if (endsWith(path, ".avi")) {
+            if (get_content_entry(path + "x")) {
+                //Use AVIX if available when AVI is absent
+                path = convert_path_content(path + "x");
+            }
+        } else if (endsWith(path, ".avix")) {
+            std::string path_avi = path.substr(0, path.length() - 1);
+            if (get_content_entry(path_avi)) {
+                //Use AVI if available when AVIX is absent
+                path = convert_path_content(path_avi);
+            }
         }
 	}
 	
-	FileImage=cFileImage::Create(path.c_str());
+	cFileImage* FileImage = path.length() > 0 ? cFileImage::Create(path.c_str()) : nullptr;
 	if(!FileImage) {
-	    //If the file extension is not recognized, open it using DirectX 
-		return ReLoadDDS(Texture);
+        bool err;
+#ifdef PERIMETER_D3D9
+	    //If the file extension is not recognized, try open it using DirectX 
+        err = ReLoadDDS(Texture);
+#else
+        err = true;
+#endif
+        if (err) {
+            Error(Texture);
+            Texture->Release();
+        }
+#ifdef PERIMETER_DEBUG
+        fprintf(stderr, "ReLoadDDS %s %d\n", path.c_str(), err);
+#endif
+        return err;
 	}
 	
 	if(FileImage->load(path.c_str()))
@@ -444,26 +362,7 @@ bool cTexLibrary::ReLoadTexture(cTexture* Texture,Vect2f kscale)
 		Texture->SetTimePerFrame((FileImage->GetTime()-1)/(FileImage->GetLength()-1));
 	Texture->SetWidth(FileImage->GetX()),Texture->SetHeight(FileImage->GetY());
 
-	int err=1;
-	if(Texture->IsScaleTexture())
-	{
-		int dx_out= xm::round(Texture->GetWidth() * kscale.x);
-		int dy_out= xm::round(Texture->GetHeight() * kscale.y);
-		int newx=Power2up(dx_out);
-		int newy=Power2up(dy_out);
-		Vect2f uvscale;
-		uvscale.x=((kscale.x*Texture->GetWidth())/newx);
-		uvscale.y=((kscale.y*Texture->GetHeight())/newy);
-
-		err=gb_RenderDevice->CreateTexture(Texture,FileImage,dx_out,dy_out);
-		Texture->SetWidth(newx);
-		Texture->SetHeight(newy);
-		((cTextureScale*)Texture)->SetScale(kscale,uvscale);
-	}
-	else
-	{
-		err=gb_RenderDevice->CreateTexture(Texture,FileImage,-1,-1);
-	}
+	int err=gb_RenderDevice->CreateTexture(Texture,FileImage);
 
 	delete FileImage;
 	if(err)
@@ -476,21 +375,11 @@ bool cTexLibrary::ReLoadTexture(cTexture* Texture,Vect2f kscale)
 	return true;
 }
 
-bool cTexLibrary::ReLoadTexture(cTexture* Texture)
-{
-	if(Texture->IsScaleTexture())
-	{
-		cTextureScale* p=(cTextureScale*)Texture;
-		return ReLoadTexture(Texture,p->GetCreateScale());
-	}
-
-	return ReLoadTexture(Texture,Vect2f(1,1));
-}
-
-void cTexLibrary::Error(cTexture* Texture)
-{
-	if(enable_error)
-		VisError<<"Error: cTexLibrary::GetElement()\r\n"<<"Texture is bad: "<<Texture->GetName()<<"."<<VERR_END;
+void cTexLibrary::Error(cTexture* Texture) {
+	if(enable_error) {
+        VisError << "Error: cTexLibrary::GetElement()\r\nTexture is bad: " << Texture->GetName().c_str() << "."
+                 << VERR_END;
+    }
 }
 
 void cTexLibrary::ReloadAllTexture()
@@ -501,19 +390,22 @@ void cTexLibrary::ReloadAllTexture()
 	FOR_EACH(textures,it)
 	{
 		cTexture* p=*it;
-		if(p->GetName() && p->GetName()[0])
-		{
+		if (!p->GetName().empty() && p->GetName()[0]) {
 			ReLoadTexture(p);
 		}
 	}
 }
 
+#ifdef PERIMETER_D3D9
 bool cTexLibrary::ReLoadDDS(cTexture* Texture)
 {
-	char* buf=NULL;
-	int size;
+    if (!gb_RenderDevice3D) {
+        return false;
+    }
+	char* buf = nullptr;
+	int size = 0;
 	//0 - alpha_none, 1- alpha_test, 2 - alpha_blend
-	int ret=ResourceFileRead(Texture->GetName(),buf,size);
+	int ret=ResourceFileRead(Texture->GetName().c_str(),buf,size);
 	if(ret)
 		return false;
 
@@ -528,35 +420,24 @@ bool cTexLibrary::ReLoadDDS(cTexture* Texture)
 		}
 	} auto_delete(buf);
 
+#ifdef _WIN32
 	DDSURFACEDESC2* ddsd=(DDSURFACEDESC2*)(1+(uint32_t*)buf);
-	if(ddsd->ddsCaps.dwCaps2&DDSCAPS2_CUBEMAP)
-	{
-		LPDIRECT3DCUBETEXTURE9 pCubeTexture=NULL;
-		if(FAILED(D3DXCreateCubeTextureFromFileInMemory(gb_RenderDevice3D->lpD3DDevice, buf, size, &pCubeTexture)))
-		{
-			Error(Texture);
-			Texture->Release();
-			return false;
-		}
-
-		Texture->BitMap.push_back((IDirect3DTexture9*)pCubeTexture);
-		return true;
-	}else
-	{
-		LPDIRECT3DTEXTURE9 pTexture=gb_RenderDevice->CreateTextureFromMemory(buf,size);
-		if(!pTexture)
-		{
-			Error(Texture);
-			Texture->Release();
-			return false;
-		}
-
-		D3DSURFACE_DESC desc;
-		RDCALL(pTexture->GetLevelDesc(0,&desc));
-		Texture->SetWidth(desc.Width);
-		Texture->SetHeight(desc.Height);
-
-		Texture->BitMap.push_back(pTexture);
-		return true;
+	if(ddsd->ddsCaps.dwCaps2&DDSCAPS2_CUBEMAP) {
+        return false;
 	}
+#endif
+    IDirect3DTexture9* pTexture=gb_RenderDevice3D->CreateTextureFromMemory(buf,size);
+    if(!pTexture)
+    {
+        return false;
+    }
+
+    D3DSURFACE_DESC desc;
+    RDCALL(pTexture->GetLevelDesc(0,&desc));
+    Texture->SetWidth(desc.Width);
+    Texture->SetHeight(desc.Height);
+
+    Texture->frames.emplace_back().d3d = pTexture;
+    return true;
 }
+#endif

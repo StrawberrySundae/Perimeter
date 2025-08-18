@@ -8,7 +8,7 @@
 #define NULL	0L
 #endif
 
-#define CRASH_DIR "perimeter_crash"
+#define CRASH_DIR "CrashData"
 
 #define X_WINNT 		0x0001
 #define X_WIN32S		0x0002
@@ -32,8 +32,8 @@ struct XErrorHandler
 {
 	unsigned state;
 
-	const char* prefix;
-
+	std::string prefix;
+    std::string locale;
     std::string log_path;
 
 	void (*restore_func)();
@@ -47,19 +47,21 @@ struct XErrorHandler
 	void	 SetRestore(void (*rf)());
     void	 SetCrash(void (*cf)());
 	void	 SetState(int s){state=s;}
-	void	 Abort(const char* message, int code = XERR_USER, int addval = -1, const char* subj = NULL);
-    void	 Abort(const std::string& message, int code = XERR_USER, int addval = -1, const char* subj = NULL);
+    void     SetLocale(std::string locale_) { locale = std::move(locale_); };
+    [[noreturn]] void	 Abort(const char* message, int code = XERR_USER, int addval = -1, const char* subj = NULL);
+    [[noreturn]] void	 Abort(const std::string& message, int code = XERR_USER, int addval = -1, const char* subj = NULL);
     bool     ShowErrorMessage(const char* message);
-	void	 Exit();
-	void	 RTC(const char *file,unsigned int line, const char *expr);
+    [[noreturn]] void	 Exit();
+    [[noreturn]] void	 RTC(const char *file,unsigned int line, const char *expr);
 };
 
 std::string decodeStackAddress(const void* addr);
 
 extern XErrorHandler ErrH;
+extern void ErrH_RTC(const char *file,unsigned int line, const char *expr);
 
 // Use this macro for after any operation for errors diagnostic
-#define XAssert(expr) ErrH.RTC(__FILE__,__LINE__,expr)
+#define XAssert(expr) ErrH_RTC(__FILE__,__LINE__,expr)
 
 
 #if (!defined(_FINAL_VERSION_) || defined(_DEBUG) || defined(PERIMETER_DEBUG_ASSERT)) && !defined(NASSERT)
@@ -80,9 +82,9 @@ void SetAssertRestoreGraphicsFunction(void(*func)());
 
 #else  //  ...
 
-#define SetAssertRestoreGraphicsFunction(func)
-#define xxassert(exp, msg) 
-#define xassert(exp) 
+#define SetAssertRestoreGraphicsFunction(func) {}
+#define xxassert(exp, msg) {}
+#define xassert(exp) {}
 
 #endif  //  ...
 

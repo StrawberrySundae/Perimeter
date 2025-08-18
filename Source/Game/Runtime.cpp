@@ -1,3 +1,4 @@
+#include "../version.h"
 #include "StdAfx.h"
 
 #include "Umath.h"
@@ -17,7 +18,6 @@
 #include "Config.h"
 
 #include "PerimeterSound.h"
-#include "Controls.h"
 
 #include "MusicManager.h"
 
@@ -32,40 +32,49 @@
 #include "codepages/codepages.h"
 
 #include <SDL.h>
+#include <SDL_hints.h>
 #include <SDL_image.h>
+#include <SDL_vulkan.h>
+
+#ifdef GPX
+#include <c/gamepix.h>
+#endif
 
 #ifdef _WIN32
-#define WIN32_LEAN_AND_MEAN		// Exclude rarely-used stuff from Windows headers
-#include <windows.h>
-#define execv _execv
-//Needed for extracting HWND from SDL_Window, in Linux it gives conflict due to XErrorHandler
-#include <SDL_syswm.h>
+#include <commdlg.h>
 #endif
 
 //#define WINDOW_FULLSCREEN_FLAG SDL_WINDOW_FULLSCREEN
 #define WINDOW_FULLSCREEN_FLAG SDL_WINDOW_FULLSCREEN_DESKTOP
 
-#ifndef PERIMETER_EXODUS
-#include <commdlg.h>
-#endif
+#include "../HT/mt_config.h"
 #include "../HT/ht.h"
 #include "GraphicsOptions.h"
 #include "GameContent.h"
+#include "SoundScript.h"
+
+#ifdef GPX
+extern void pollGpxEvents();
+#endif
+
+const char* currentShortVersion = PERIMETER_VERSION;
 
 const char* currentVersion = 
-"Version "
-#include "../version.h"
-#ifdef _FINAL_VERSION_
-" Final"
+"Version " PERIMETER_VERSION
+#ifndef _FINAL_VERSION_
+" NotFinal"
 #endif
 #ifdef PERIMETER_DEBUG
 " Debug"
 #endif
-" (" __DATE__ " " __TIME__ ")"
-;
-
-const char* currentShortVersion =
-#include "../version.h"
+#ifdef PERIMETER_ARCH_64
+" 64b"
+#else
+" 32b"
+#endif
+#ifdef GPX
+" html5 v8"
+#endif
 ;
 
 uint16_t currentVersionNumbers[] = {0, 0, 0};
@@ -83,12 +92,19 @@ cTileMap* terMapPoint = NULL;
 int terBitPerPixel = 16;
 int terScreenRefresh = 0;
 int terScreenIndex = 0;
+#ifdef GPX
+constexpr int terFullScreen = 0;
+constexpr int terResizableWindow = 0;
+bool isRuntimePaused = false;
+#else
 int terFullScreen = 0;
 int terResizableWindow = 1;
+#endif
 int terScreenSizeX = 800;
 int terScreenSizeY = 600;
 float terGraphicsGamma = 1;
-int terGrabInput = 1;
+int terGrabInput = 0;
+int terVSyncEnable = 1;
 int applicationRunBackground = 1;
 
 int terDrawMeshShadow = 2;
@@ -111,9 +127,12 @@ bool applicationRestartFlag = false;
 std::vector<std::string> applicationRestartArgs;
 
 SDL_Window* sdlWindow = nullptr;
+#ifdef _WIN32
 HWND hWndVisGeneric = nullptr;
+#endif
 
 extern char _bMenuMode;
+extern void PNetCenterNetQuant();
 
 SyncroTimer global_time;
 SyncroTimer frame_time;
@@ -200,14 +219,14 @@ void InternalErrorHandler()
         SDL_SetWindowGrab(sdlWindow, SDL_FALSE);
     }
 #ifndef _FINAL_VERSION_
-    RestoreGDI();
+    RestoreGDI(); //TODO is this necessary anymore?
 	if(universe()) universe()->allSavePlayReel();
 #endif
 }
 
 void refresh_window_size(bool update_resolution) {
     Vect2i size;
-    if (terFullScreen) {
+    if (terFullScreen || !sdlWindow) {
         size.x = terScreenSizeX;
         size.y = terScreenSizeY;
     } else {
@@ -251,7 +270,9 @@ void HTManager::init()
 	interpolation_timer_ = 0;
 	interpolation_factor_ = 0;
 
-    ErrH.SetPrefix(currentVersion);
+    std::string err_prefix = currentVersion;
+    err_prefix += " (A:" + std::to_string(computeArchFlags()) + ")";
+    ErrH.SetPrefix(err_prefix.c_str());
     ErrH.SetRestore(InternalErrorHandler);
     ErrH.SetCrash(CrashHandler);
 	SetAssertRestoreGraphicsFunction(RestoreGDI);
@@ -261,13 +282,14 @@ void HTManager::init()
 
 	allocation_tracking("before");
 
-	if (IniManager("Perimeter.ini").getInt("Game","ZIP")) {
+    IniManager perimeter_ini("Perimeter.ini");
+	if (perimeter_ini.getInt("Game","ZIP")) {
         ZIPOpen("resource.pak");
     }
 
 	PerimeterDataChannelLoad();
 
-	terMissionEdit = IniManager("Perimeter.ini").getInt("Game","MissionEdit");
+	terMissionEdit = perimeter_ini.getInt("Game","MissionEdit");
 	check_command_line_parameter("edit", terMissionEdit);
 
 	GameShell::preLoad();
@@ -275,13 +297,17 @@ void HTManager::init()
 	initGraphics();
 
     initInterfaceAttributes();
-    initAttributes();
 
 	allocation_tracking("PerimeterGraphicsInit");
 	
-	InitSound(IniManager("Perimeter.ini").getInt("Sound","SoundEnable"), IniManager("Perimeter.ini").getInt("Sound","MusicEnable"));
+	InitSound();
 
 	gameShell = new GameShell(terMissionEdit);
+
+    SetVolumeMusic(terMusicVolume);
+    SNDSetVoiceVolume(terVoiceVolume);
+    SNDSetSoundVolume(terSoundVolume);
+    
     refresh_window_size(false);
 
 	allocation_tracking("PerimeterLogicInit");
@@ -295,8 +321,10 @@ void HTManager::done()
 		PerimeterDataChannelSave();
 	
 	// Logic
-	delete gameShell;
-	gameShell = 0;
+    if (gameShell) {
+        delete gameShell;
+        gameShell = nullptr;
+    }
 
 	FinitSound();
 	finitGraphics();
@@ -409,7 +437,7 @@ void PerimeterSetupDisplayMode() {
     }
 
     //Set current fullscreen state
-    if (windowFullscreen != terFullScreen) {
+    if (windowFullscreen != (terFullScreen != 0)) {
 #if PERIMETER_DEBUG
         printf("SDL_SetWindowFullscreen %d\n", terFullScreen);
 #endif
@@ -447,10 +475,10 @@ void PerimeterSetupDisplayMode() {
             if (SDL_GetWindowFlags(sdlWindow)&(SDL_WINDOW_MAXIMIZED|SDL_WINDOW_MINIMIZED)) {
                 SDL_RestoreWindow(sdlWindow);
             }
-            SDL_SetWindowSize(sdlWindow, mode.w, mode.h);
 #if PERIMETER_DEBUG
-            printf("SDL_SetWindowSize\n");
+            fprintf(stdout, "SDL_SetWindowSize %dx%d\n", mode.w, mode.h);
 #endif
+            SDL_SetWindowSize(sdlWindow, mode.w, mode.h);
             
             //Grab window
             if (terGrabInput) {
@@ -463,12 +491,8 @@ void PerimeterSetupDisplayMode() {
     SDL_GetWindowSize(sdlWindow, &terScreenSizeX, &terScreenSizeY);
 }
 
-void PerimeterCreateWindow() {
-    Uint32 window_flags = SDL_WINDOW_HIDDEN;
-#ifndef _WIN32
-    //On non Windows we use dxvk-native which uses Vulkan
-    window_flags |= SDL_WINDOW_VULKAN;
-#endif
+void PerimeterCreateWindow(uint32_t window_flags) {
+    window_flags |= SDL_WINDOW_HIDDEN;
     if (terFullScreen) {
         window_flags |= WINDOW_FULLSCREEN_FLAG;
     }
@@ -481,6 +505,18 @@ void PerimeterCreateWindow() {
             windowPos = SDL_WINDOWPOS_CENTERED_DISPLAY(terScreenIndex);
         } else {
             windowPos = SDL_WINDOWPOS_UNDEFINED_DISPLAY(terScreenIndex);            
+        }
+    }
+    if (window_flags & SDL_WINDOW_VULKAN) {
+        int res = SDL_Vulkan_LoadLibrary(nullptr);
+        if (res) {
+            fprintf(stderr, "SDL_Vulkan_LoadLibrary: Error '%d', '%s'", res, SDL_GetError());
+        }
+    }
+    if (window_flags & SDL_WINDOW_OPENGL) {
+        int res = SDL_GL_LoadLibrary(nullptr);
+        if (res) {
+            fprintf(stderr, "SDL_GL_LoadLibrary: Error '%d', '%s'", res, SDL_GetError());
         }
     }
     sdlWindow = SDL_CreateWindow(
@@ -534,27 +570,51 @@ void PerimeterCreateWindow() {
     PerimeterSetupDisplayMode();
     
     //Grab input
-    if (terGrabInput && !terFullScreen) {
+    if (terGrabInput) {
         SDL_SetWindowGrab(sdlWindow, SDL_TRUE);
     }
-
-#ifdef _WIN32
-    //Get HWND from SDL window
-    SDL_SysWMinfo wm_info;
-	SDL_VERSION(&wm_info.version);
-	SDL_GetWindowWMInfo(sdlWindow, &wm_info);
-	
-    hWndVisGeneric = wm_info.info.win.window;
-#else
-    //dxvk-native uses HWND as SDL2 window handle, so this is allowed
-    hWndVisGeneric = static_cast<HWND>(sdlWindow);
-#endif
 }
 
 cInterfaceRenderDevice* SetGraph()
 {
-	cInterfaceRenderDevice *IRenderDevice=CreateIRenderDevice();
+    const char* graph_str = check_command_line("graph");
+    std::string graph(graph_str ? graph_str : "");
 
+    eRenderDeviceSelection deviceSelection;
+    if (graph == "dx" || graph == "d3d" || graph == "dx9" || graph == "d3d9") {
+        deviceSelection = DEVICE_D3D9;
+    } else if (graph == "sokol" || graph == "gl" || graph == "gles" || graph == "metal") {
+        deviceSelection = DEVICE_SOKOL;
+    } else if (graph == "headless" || graph == "none" || graph == "null" || graph == "nowindow") {
+        deviceSelection = DEVICE_HEADLESS;
+    } else {
+#ifdef PERIMETER_D3D9
+        deviceSelection = DEVICE_D3D9;
+#else
+#ifdef PERIMETER_SOKOL
+        deviceSelection = DEVICE_SOKOL;
+#else
+        deviceSelection = DEVICE_HEADLESS;
+#endif
+#endif
+    }
+    
+	cInterfaceRenderDevice *IRenderDevice = CreateIRenderDevice(deviceSelection);
+
+#ifdef GPX
+    terBitPerPixel = 32;
+    terScreenSizeX = gpx()->sys()->getWidth();
+    terScreenSizeY = gpx()->sys()->getHeight();
+#ifdef EMSCRIPTEN
+    float minHeight = 600;
+    if (terScreenSizeY < minHeight) {
+        terScreenSizeY = minHeight;
+        terScreenSizeX = minHeight * gpx()->sys()->getWidth() / gpx()->sys()->getHeight();
+    }
+    printf("Display size: %dx%d\n", terScreenSizeX, terScreenSizeY);
+#endif
+    int ModeRender = RENDERDEVICE_MODE_RGB32 | RENDERDEVICE_MODE_WINDOW;
+#else
 	int ModeRender=0;
 	if (!isTrueFullscreen()) {
         ModeRender |= RENDERDEVICE_MODE_WINDOW;
@@ -564,13 +624,20 @@ cInterfaceRenderDevice* SetGraph()
     } else {
         ModeRender |= RENDERDEVICE_MODE_RGB16;
     }
+#endif
 
-//	if(HTManager::instance()->IsUseHT())
-		ModeRender|=RENDERDEVICE_MODE_MULTITHREAD;
+//	if(HTManager::instance()->IsUseHT()) 		
+        ModeRender |= RENDERDEVICE_MODE_MULTITHREAD;
 
-    PerimeterCreateWindow();
+    if (terVSyncEnable) {
+        ModeRender |= RENDERDEVICE_MODE_VSYNC;
+    }
 
-    int error = IRenderDevice->Init(terScreenSizeX,terScreenSizeY,ModeRender,hWndVisGeneric,terScreenRefresh);
+    if (deviceSelection != DEVICE_HEADLESS) {
+        PerimeterCreateWindow(IRenderDevice->GetWindowCreationFlags());
+    }
+
+    int error = IRenderDevice->Init(terScreenSizeX,terScreenSizeY,ModeRender,sdlWindow,terScreenRefresh);
 	if(error)
 	{
         fprintf(stderr, "SetGraph init error: %d\n", error);
@@ -591,10 +658,11 @@ void HTManager::initGraphics()
     terVisGeneric->SetFontRootDirectory(getLocRootPath());
 
 	terVisGeneric->SetEffectLibraryPath("RESOURCE\\FX","RESOURCE\\FX\\TEXTURES");
-
-	bool occlusion=IniManager("Perimeter.ini").getInt("Graphics","EnableOcclusion");
+    
+    IniManager perimeter_ini("Perimeter.ini");
+	bool occlusion=perimeter_ini.getInt("Graphics","EnableOcclusion");
 	terVisGeneric->EnableOcclusion(occlusion);
-	bool point_light=IniManager("Perimeter.ini").getInt("Graphics","EnablePointLight");
+	bool point_light=perimeter_ini.getInt("Graphics","EnablePointLight");
 	terVisGeneric->EnablePointLight(point_light);
 
 	terVisGeneric->SetFarDistanceLOD(terFarDistanceLOD);
@@ -623,7 +691,7 @@ void HTManager::initGraphics()
     sColor4f b(1,1,1,1);
 	terLight->SetColor(&a, &b);
 
-	pDefaultFont=terVisGeneric->CreateFont("Arial",12);
+	pDefaultFont= terVisGeneric->CreateGameFont("Arial", 12);
 	xassert(pDefaultFont);
 	terRenderDevice->SetDefaultFont(pDefaultFont);
 	
@@ -634,12 +702,6 @@ void HTManager::initGraphics()
 
 	terCamera = new terCameraType(terScene->CreateCamera());
 
-//For AVI
-/*	if(terWinVideoEnable){
-		terRenderDevice->Fill(0,0,0);
-		terRenderDevice->Flush();
-	};*/
-
     setSourceUIResolution(Vect2i(terScreenSizeX, terScreenSizeY));
 
 	vMap.prepare("RESOURCE\\Worlds");
@@ -649,7 +711,10 @@ void HTManager::initGraphics()
 
 void HTManager::finitGraphics()
 {
-	gameShell->done();
+    if (gameShell) {
+        delete gameShell;
+        gameShell = nullptr;
+    }
 
 	RELEASE(terLight);
 	if(terCamera){
@@ -662,14 +727,19 @@ void HTManager::finitGraphics()
 	terRenderDevice->SetDefaultFont(NULL);
 	terRenderDevice->SetFont(NULL);
 	RELEASE(pDefaultFont);
-	if(terVisGeneric)
-		terVisGeneric->ClearData();
-	if(terVisGeneric)
-		terVisGeneric->Release();
-	if(terRenderDevice)
-		terRenderDevice->Release();
-	if(terLogicGeneric)
-		terLogicGeneric->Release();
+	if(terVisGeneric) {
+        terVisGeneric->ClearData();
+    }
+	if(terVisGeneric) {
+        terVisGeneric->Release();
+    }
+	if (terRenderDevice) {
+        terRenderDevice->Done();
+        terRenderDevice->Release();
+    }
+	if(terLogicGeneric) {
+        terLogicGeneric->Release();
+    }
 
 	terRenderDevice = NULL;
 	terVisGeneric = NULL;
@@ -679,62 +749,95 @@ void HTManager::finitGraphics()
         SDL_ShowCursor(SDL_TRUE);
         SDL_DestroyWindow(sdlWindow);
         sdlWindow = nullptr;
+#ifdef _WIN32
         hWndVisGeneric = nullptr;
+#endif
+        SDL_GL_UnloadLibrary();
+        SDL_Vulkan_UnloadLibrary();
     }
 }
 
 //--------------------------------
 
-void InitSound(bool sound, bool music, bool firstTime)
+void LoadSoundScriptTable() {
+    SingletonPrm<SoundScriptTable>::load();
+
+    //Remove the sounds that are ET specific
+    if (!(terGameContentAvailable & GAME_CONTENT::PERIMETER_ET)) {
+         for (auto& i: soundScriptTable().table) {
+            if (i.name.value() != "voices") {
+                continue;
+            }
+
+            auto it_removed = std::remove_if(
+                i.data.begin(),
+                i.data.end(),
+                [] (SoundSetupPrm& prm) {
+                    return startsWith(prm.name.value(), "Electro");
+                }
+            );
+            i.data.erase(it_removed, i.data.end());
+        }
+    }
+}
+
+void InitSound()
 {
-	terSoundEnable = sound;
-	terMusicEnable = music;
     int mixChannels = 30; //Default SDL_mixer is 8, DirectSound has 31
     int chunkSizeFactor = 12; //1056 bytes under 2 channel 22khz 16 bits 
+    terAudioEnable = true;
+    terSoundVolume = 0.75f;
+    terSpeechVolume = 0.75f;
+    terVoiceVolume = 0.75f;
+    terMusicVolume = 0.75f;
 
-	if (firstTime) {
-		IniManager ini("Perimeter.ini");
-		terSoundVolume = ini.getFloat("Sound","SoundVolume");
-		terMusicVolume = ini.getFloat("Sound","MusicVolume");
-        IniManager ini_no("Perimeter.ini", false);
-        ini_no.getInt("Sound","MixChannels", mixChannels);
-        ini_no.getInt("Sound","ChunkSize", chunkSizeFactor);
-	}
+    IniManager ini_no("Perimeter.ini", false);
+    ini_no.getInt("Sound","MixChannels", mixChannels);
+    ini_no.getInt("Sound","ChunkSize", chunkSizeFactor);
+    ini_no.getFloat("Sound","SoundVolume", terSoundVolume);
+    ini_no.getFloat("Sound","SpeechVolume", terSpeechVolume);
+    ini_no.getFloat("Sound","VoiceVolume", terVoiceVolume);
+    ini_no.getFloat("Sound","MusicVolume", terMusicVolume);
 
-	if(terSoundEnable  || terMusicEnable){
-		static int inited = 0;
+    if (terRenderDevice->GetRenderSelection() == DEVICE_HEADLESS
+    || check_command_line("disable_sound") != nullptr) {
+        terAudioEnable = false;
+    }
 
-		SNDSetLocDataDirectory(getLocDataPath().c_str());
+    SNDSetLocDataDirectory(getLocDataPath().c_str());
+    SNDSetSoundDirectory("RESOURCE\\SOUNDS\\EFF\\");
 
-		if(!inited && check_command_line("disable_sound") == nullptr){
-			inited = 1;
+    if (terAudioEnable) {
+#ifdef PERIMETER_DEBUG_ASSERT
+        terEnableSoundLog = 1;
+#endif
+        SNDEnableErrorLog(terEnableSoundLog != 0);
 
-			SNDSetSoundDirectory("RESOURCE\\SOUNDS\\EFF\\");
+        if (!SNDInitSound(mixChannels, chunkSizeFactor)) {
+            terAudioEnable = false;
+        }
+    }
 
-			if(terEnableSoundLog)
-				SNDEnableErrorLog("sound.txt");
-
-			if(SNDInitSound(mixChannels, chunkSizeFactor)){
-				SNDScriptPrmEnableAll();
-			} else {
-                terMusicEnable = false;
-                terSoundEnable = false;
-            }
-		}
-	
-		SetVolumeMusic( terMusicVolume );
-		SNDSetVolume( terSoundVolume );
-
-		SND2DPanByX(1, fSoundWidthPower);
-		snd_listener.SetZMultiple(fSoundZMultiple);
-	}
-
-	SNDEnableSound(terSoundEnable);
+    if (terAudioEnable) {
+        SNDEnableSound(0 < terSoundVolume);
+        SNDEnableVoices(0 < terVoiceVolume);
+        LoadSoundScriptTable();
+        SNDScriptPrmEnableAll();
+        SND2DPanByX(1, fSoundWidthPower);
+        snd_listener.SetZMultiple(fSoundZMultiple);
+    } else {
+        terMusicVolume = 0.0f;
+        terSpeechVolume = 0.0f;
+        terVoiceVolume = 0.0f;
+        terSoundVolume = 0.0f;
+        SNDEnableSound(false);
+        SNDEnableVoices(false);
+    }
 }
 
 void SoundQuant()
 {
-	if(!terSoundEnable)
+	if(!terAudioEnable)
 		return;
 
 	snd_listener.SetPos(terCamera->matrix());
@@ -747,14 +850,15 @@ void SoundQuant()
 
 void FinitSound()
 {
-	IniManager ini("Perimeter.ini");
-	ini.putInt("Sound","SoundEnable", terSoundEnable);
-	ini.putInt("Sound","MusicEnable", terMusicEnable);
-	ini.putFloat("Sound","SoundVolume", terSoundVolume);
-	ini.putFloat("Sound","MusicVolume", terMusicVolume);
+    if(!terAudioEnable) {
+        return;
+    }
 
-	if(!terSoundEnable && !terMusicEnable)
-		return;
+	IniManager ini("Perimeter.ini");
+	ini.putFloat("Sound","SoundVolume", terSoundVolume);
+    ini.putFloat("Sound","MusicVolume", terMusicVolume);
+    ini.putFloat("Sound","SpeechVolume", terSpeechVolume);
+    ini.putFloat("Sound","VoiceVolume", terVoiceVolume);
 
 	SNDReleaseSound();
 }
@@ -812,19 +916,22 @@ void show_help() {
             "    not_triggerchains_binary=1 - Disallows loading triggerchain stored in .bin instead of .spg\n"
             "    debug_key_handler=1 - Enables debug key handler\n"
             "    explore=1 - Opens Debug.prm editor and closes game\n"
+            "    compress_worlds=0/1 - Attempts to decompress or compress all worlds\n"
             "    start_splash=0/1 - Enables or disables intro movies\n"
+            "    show_fps=0/1 - Displays FPS counter\n"
             "    convert=1 - Saves opened map and closes game\n"
             "\n"
             "    More info and source code: https://github.com/KD-lab-Open-Source/Perimeter\n"
             "\n"
             "Multiplayer:\n"
             "    server=IP:PORT - Opens game in server mode and binds to address\n"
-            "    connect=IP:PORT - Connects to provided server address\n"
+            "    connect=IP:PORT - Connects as client to provided server address\n"
+            "    connect_room=ROOMID - Connects as client to provided room id\n"
             "    password=Password - Password to use as server or connecting to server\n"
             "    name=Name - Player name to use as server or connecting to server\n"
             "    save=savegame - Multiplayer save name to use to resume as server\n"
             "    room=Room - Game/room name for server, computed from server player name if empty\n"
-          //"    public=1 - Sets server to broadcast into public list\n" //TODO unimplemented yet
+            "    public=0/1 - Sets server to broadcast into public list or listen port only if 0\n"
             "\n"
             "Map loading args:\n"
             "    open=path/inside/Resource - Relative path inside resource, like Saves/Profile0/mysave\n"
@@ -835,6 +942,7 @@ void show_help() {
             "    resx=1280 resy=720 - Allows setting resolution to use\n"
             "    uianchor=0/1/2/3 - Controls UI anchoring when aspect ratio is wider than 4:3\n"
             "    GrabInput=0/1 - Controls window input grabbing\n"
+            "    VSync=0/1 - Enable or disables VSync"
             "    RunBackground=0/1 - Enables or disables running game while not focused\n"
             "    disable_sound=1 - Disables sound in this launch\n"
             "    initial_menu= - Tells game to load this menu screen as initial menu, examples can be SINGLE, MULTIPLAYER_LIST, BATTLE...\n"
@@ -851,12 +959,104 @@ void show_help() {
 }
 
 //------------------------------
-#ifndef _WIN32
+#if !defined(_WIN32) && !defined(GPX)
 int main(int argc, char *argv[]) {
     //Call SDL main init
     SDL_SetMainReady();
 
     return SDL_main(argc, argv);
+}
+#endif
+
+char* alloc_exec_arg_string(std::string arg, bool wrap_spaces) {
+#ifdef _WIN32
+    //Workaround for win32 execv() getting confused when .exe is inside a path containing spaces
+    if (wrap_spaces && arg.find(' ') != std::string::npos) {
+        arg = "\"" + arg + "\"";
+    }
+#endif
+    size_t len = arg.length() + 1;
+    char* str = static_cast<char*>(malloc(len));
+    strcpy(str, arg.c_str());
+    return str;
+}
+#ifdef GPX
+void pauseRuntime() {
+    isRuntimePaused = true;
+}
+
+void resumeRuntime() {
+    isRuntimePaused = false;
+}
+#endif
+
+bool mainQuant() {
+    bool run = true;
+#ifdef GPX
+    if (isRuntimePaused) {
+        return run;
+    }
+
+    while (!gpx()->sys()->isTrustedDomain()) {
+        // pass
+    }
+#endif
+
+    app_event_poll();
+
+    //NetworkPause handler
+    static bool runapp = true;
+    if (applicationIsGo() != runapp) {
+        if (gameShell && (!gameShell->alwaysRun())) {
+            if (gameShell->getNetClient()) {
+                if (gameShell->getNetClient()->setPause(!applicationHasFocus())) {
+                    runapp = applicationIsGo();
+                }
+            }
+        }
+    }
+//		if(gameShell && (!gameShell->alwaysRun()) ){
+//			if(gameShell->getNetClient())
+//				gameShell->getNetClient()->pauseQuant(applicationIsGo()));
+//		}
+
+    if (applicationIsGo()) {
+        run = HTManager::instance()->Quant();
+    } else {
+#ifdef _WIN32
+        //TODO is this necessary under SDL2 in Win32?
+        WaitMessage();
+#endif
+    }
+
+    if (!MTConfig::multithreading()) {
+        PNetCenterNetQuant();
+    }
+
+#ifdef GPX
+    static bool gpx_ready = false;
+    if (!gpx_ready) {
+        gpx_ready = true;
+#ifdef EMSCRIPTEN
+        EM_ASM(({
+            Module["canvas"].addEventListener("pointerdown", () => {
+                if (!document.pointerLockElement) {
+                    Module["canvas"].requestPointerLock().catch((e) => console.error("Can't lock mouse", e));
+                }
+            });
+        }));
+#endif
+        gpx()->sys()->mainReady(true);
+    }
+    gpx()->async()->runNextTask();
+#endif
+
+    return run;
+}
+
+#ifdef EMSCRIPTEN
+void mainLoop() {
+    mainQuant();
 }
 #endif
 
@@ -868,7 +1068,7 @@ int SDL_main(int argc, char *argv[])
         if (arg == "help" || arg == "--help" || arg == "-h" || arg == "/?") {
             show_help();
         } else if (arg == "--version" || arg == "-v") {
-            printf("Perimeter %s\n%s\n", currentShortVersion, currentVersion);
+            printf("Perimeter %s (Arch: 0x%" PRIX64 ")\n", currentVersion, computeArchFlags());
             ErrH.Exit();
         }
     }
@@ -878,16 +1078,25 @@ int SDL_main(int argc, char *argv[])
 
     //Init clock
     initclock();
-
-    //Decode stacktrace if requested
-    decode_stacktrace();
     
     //Redirect stdio and print version
     ErrH.RedirectStdio();
-    printf("Perimeter %s - %s\n", currentShortVersion, currentVersion);
+    printf("Perimeter %s (Arch: 0x%" PRIX64 ")\n", currentVersion, computeArchFlags());
+
+    //Decode stacktrace if requested
+    decode_stacktrace();
 
     //Parse version string
     decode_version(currentShortVersion, currentVersionNumbers);
+
+    //Set DPI awareness, must be done before initializing SDL video subsystem
+    //Some old versions of SDL2 may not have this hint defined
+#ifdef SDL_HINT_WINDOWS_DPI_AWARENESS
+    SDL_SetHintWithPriority(SDL_HINT_WINDOWS_DPI_AWARENESS, "system", SDL_HINT_OVERRIDE);
+#endif
+#ifdef SDL_HINT_WINDOWS_DPI_SCALING
+    SDL_SetHintWithPriority(SDL_HINT_WINDOWS_DPI_SCALING, "0", SDL_HINT_OVERRIDE);
+#endif
 
     //Start SDL stuff
     int sdlresult = SDL_Init(SDL_INIT_TIMER | SDL_INIT_AUDIO | SDL_INIT_VIDEO | SDL_INIT_EVENTS);
@@ -898,26 +1107,36 @@ int SDL_main(int argc, char *argv[])
     if (sdlresult < 0) {
         ErrH.Abort("Error initializing SDLNet", XERR_CRITICAL, sdlresult, SDLNet_GetError());
     }
+    
+    //Init keys
+    initKeyboardMapping();
 
     //Do game content detection
     detectGameContent();
 
     //Create some folders
-    for (std::string path : {
-        CRASH_DIR,
-        "cache",
-        "cache/font",
-        "cache/bump",
-    }) {
+    std::vector<std::string> paths = {
+            CRASH_DIR,
+            "cache/font",
+            "cache/bump",
+            REPLAY_PATH,
+    };
+    if(IniManager("Perimeter.ini", false).getInt("Game","AutoSavePlayReel")!=0){
+        extern const char* autoSavePlayReelDir;
+        paths.emplace_back(autoSavePlayReelDir);
+    }
+    {
+        std::string path = convert_path_content("resource/saves/");
+        if (path.empty()) path = "resource/saves/";
+        paths.emplace_back(path + "Multiplayer");
+    }
+    for (std::string path : paths) {
         path = convert_path_native(path);
         bool ok = create_directories(path);
         xassert(ok || std::filesystem::is_directory(std::filesystem::u8path(path)));
     }
-    std::string path = convert_path_content("resource/saves/") + "Multiplayer";
-    if (!std::filesystem::exists(std::filesystem::u8path(path))) {
-        bool ok = create_directories(path);
-        xassert(ok || std::filesystem::is_directory(std::filesystem::u8path(path)));
-    }
+    std::string crash_path = get_content_root_path_str() + CRASH_DIR;
+    printf("CrashData path: '%s'\n", crash_path.c_str());
 
     //Load perimeter parameters
     int xprmcompiler = IniManager("Perimeter.ini", false).getInt("Game", "XPrmCompiler");
@@ -926,43 +1145,45 @@ int SDL_main(int argc, char *argv[])
         reload_parameters();
     }
 
-    g_controls_converter.LoadKeyNameTable();
+    int mt = 1;
+    IniManager("Perimeter.ini").getInt("Game", "HT", mt);
+    check_command_line_parameter("HT", mt);
+    MTConfig::setMultithreading(mt);
 
-    int ht = IniManager("Perimeter.ini").getInt("Game", "HT");
-    check_command_line_parameter("HT", ht);
-    HTManager* runtime_object = new HTManager(ht);
-    runtime_object->setUseHT(ht ? true : false);
-
+    auto runtime_object = new HTManager();
     xassert(!(gameShell && gameShell->alwaysRun() && terFullScreen));
 
-    bool run = true;
-    while (run) {
-        app_event_poll();
-
-        //NetworkPause handler
-        static bool runapp = true;
-        if (applicationIsGo() != runapp) {
-            if (gameShell && (!gameShell->alwaysRun())) {
-                if (gameShell->getNetClient()) {
-                    if (gameShell->getNetClient()->setPause(!applicationHasFocus()))
-                        runapp = applicationIsGo();
-                }
-            }
-        }
-//		if(gameShell && (!gameShell->alwaysRun()) ){
-//			if(gameShell->getNetClient())
-//				gameShell->getNetClient()->pauseQuant(applicationIsGo()));
-//		}
-
-        if (applicationIsGo()) {
-            run = runtime_object->Quant();
-        } else {
-#ifndef PERIMETER_EXODUS
-            //TODO is this necessary under SDL2 in Win32?
-            WaitMessage();
-#endif
+    const char* cmdline_testcrash = check_command_line("testcrash");
+    if (cmdline_testcrash) {
+        if (*cmdline_testcrash == '0') {
+            uint32_t* tmp = nullptr;
+            uint32_t val = *tmp;
+            printf("crash %d\n", val);
+        } else if (*cmdline_testcrash == '1') {
+            uint64_t val = 0xDEADBEEF;
+            printf("addr %p\n", &val);
+            auto ptrfunc = reinterpret_cast<void (*)(uint32_t)>(&val);
+            ptrfunc(0x12345678);
+        } else if (*cmdline_testcrash == '2') {
+            void* ptr = malloc(102400);
+            memset(ptr, 0, 102400);
+            printf("addr %p\n", ptr);
+            auto ptrfunc = reinterpret_cast<void (*)(uint32_t)>(ptr);
+            ptrfunc(0x12345678);
         }
     }
+
+    printf("Starting main loop at: %" PRIu64 "\n", clock_us());
+
+#ifndef EMSCRIPTEN
+    while (mainQuant())  {
+        // pass
+    }
+#else
+    emscripten_set_main_loop(mainLoop, 0, true);
+#endif
+    
+    printf("Stopped main loop at: %" PRIu64 "\n", clock_us());
 
     delete runtime_object;
 	
@@ -975,40 +1196,57 @@ int SDL_main(int argc, char *argv[])
         applicationRestartFlag = false;
         
         //Copy the args that launched this game
+        const char* exec_path = nullptr;
         std::vector<char*> exec_argv;
-        for (int i = 0; i < __argc; ++i) {
-            if (startsWith(__argv[i], "tmp_")) {
+        for (int i = 0; i < app_argc; ++i) {
+            std::string arg = app_argv[i];
+            if (startsWith(arg, "tmp_")) {
                 //These are passed internally and are not supposed to pass into next instance
                 continue;
             }
-            
-            size_t len = strlen(__argv[i]) + 1;
-            char* str = static_cast<char*>(malloc(len));
-            strcpy(str, __argv[i]);
-            exec_argv.emplace_back(str);
+            if (startsWith(arg, "initial_menu") || startsWith(arg, "content_select")) {
+                //Ignore it as is only for first time, also some can cause game restart in a loop
+                continue;
+            }
+
+            if (i == 0) {
+                //Doesn't like "s
+                exec_path = alloc_exec_arg_string(arg, false);
+            }
+            exec_argv.emplace_back(alloc_exec_arg_string(arg, true));
         }
         
         //Add extra args
         for (auto const& arg : applicationRestartArgs) {
-            size_t len = arg.length() + 1;
-            char* str = static_cast<char*>(malloc(len));
-            strcpy(str, arg.c_str());
-            exec_argv.emplace_back(str);
+            exec_argv.emplace_back(alloc_exec_arg_string(arg, true));
+        }
+        
+        //Shouldn't happen
+        if (!exec_path && !exec_argv.empty()) {
+            exec_path = exec_argv[0];
         }
 
         //execv last arg must be null for termination
         exec_argv.emplace_back(nullptr);
         
         //launch ourselves again, execution of this process stops here
-        printf("Restarting:");
+        printf("Restarting: '%s' args:", exec_path);
         for (auto const& str : exec_argv) {
-            if (str) printf(" %s", str);
+            if (str) {
+                printf(" '%s'", str);
+            } else {
+                printf(" NULL");
+            }
         }
         printf("\n");
-        int ret = execv(exec_argv[0], exec_argv.data());
-        
-        //We shouldn't reach this
-        ErrH.Abort("Error restarting the application", XERR_USER, ret);
+        int ret;
+#ifdef _WIN32
+        ret = _execv(exec_path, exec_argv.data());
+#else
+        ret = execv(exec_path, exec_argv.data());
+#endif
+        //We shouldn't reach this point        
+        ErrH.Abort("Error restarting the application", XERR_USER, ret, strerror(errno));
     }
 
 	return 0;
@@ -1025,13 +1263,16 @@ void app_event_poll() {
         }
     }
     
-    uint32_t windowID = SDL_GetWindowID(sdlWindow);
+    uint32_t windowID = sdlWindow ? SDL_GetWindowID(sdlWindow) : 0;
 
     //Iterate each SDL event that we may have queued since last poll
     SDL_Event event;
     bool closing = false;
+#ifdef GPX
+    pollGpxEvents();
+#endif
     while (SDL_PollEvent(&event) == 1) {
-        if (event.window.windowID && (!sdlWindow || event.window.windowID != windowID)) {
+        if (sdlWindow && event.window.windowID && event.window.windowID != windowID) {
             //Event is for a window that is not current or window is not available
             continue;
         }
@@ -1057,30 +1298,31 @@ void app_event_poll() {
         switch (event.type) {
             case SDL_MOUSEBUTTONDOWN: {
                 //Grab window at click if window is resizable and is not already grabbed
-                if (terGrabInput && !terFullScreen && applicationHasFocus_ && SDL_GetWindowGrab(sdlWindow) == SDL_FALSE) {
+                if (terGrabInput && applicationHasFocus_ && sdlWindow && SDL_GetWindowGrab(sdlWindow) == SDL_FALSE) {
                     SDL_SetWindowGrab(sdlWindow, SDL_TRUE);
                 }
                 break;
             }
             case SDL_WINDOWEVENT: {
                 switch (event.window.event) {
-                    case SDL_WINDOWEVENT_SHOWN: {
-                        break;
-                    }
                     case SDL_WINDOWEVENT_RESIZED:
                     case SDL_WINDOWEVENT_SIZE_CHANGED: {
                         if (0 <= lastWindowResize) {
+#if 1
+                            lastWindowResize = 10;
+#else
                             if (_bMenuMode) {
-                                lastWindowResize = 15;
+                                lastWindowResize = 10;
                             } else {
                                 //Game can be unstable during frequent resizing
-                                lastWindowResize = 30;
+                                lastWindowResize = 20;
                             }
+#endif
                         }
                         break;
                     }
                     case SDL_WINDOWEVENT_FOCUS_LOST: {
-                        if (terGrabInput) {
+                        if (terGrabInput && sdlWindow) {
                             SDL_SetWindowGrab(sdlWindow, SDL_FALSE);
                         }
                         if (!applicationRunBackground) {
@@ -1097,9 +1339,23 @@ void app_event_poll() {
                         closing = true;
                         break;
                     }
+                    case SDL_WINDOWEVENT_TAKE_FOCUS:
+                    case SDL_WINDOWEVENT_ENTER:
+                    case SDL_WINDOWEVENT_LEAVE:
+                    case SDL_WINDOWEVENT_EXPOSED:
+                    case SDL_WINDOWEVENT_SHOWN:
+                    case SDL_WINDOWEVENT_HIDDEN: {
+                        break;
+                    }
                     default:
                         break;
                 }
+                break;
+            }
+            case SDL_KEYUP:
+            case SDL_KEYDOWN:
+            case SDL_MOUSEBUTTONUP:
+            case SDL_MOUSEMOTION: {
                 break;
             }
             case SDL_QUIT: {
@@ -1112,22 +1368,16 @@ void app_event_poll() {
         }
         
         if (closing) {
-            if(gameShell) {
-                if (gameShell->GameActive && !isShiftPressed()) {
-                    //When game is running we want to gracefully shutdown the game by showing main menu
-                    sKey k(VK_ESCAPE, true);
-                    gameShell->KeyPressed(k);
-                    gameShell->KeyUnpressed(k);
-                } else {
-                    //Terminate it
-                    gameShell->terminate();
-                }
+            if (gameShell) {
+                onGameTerminationRequest();
             } else {
                 //No gameshell available, manually close stuff
                 SDL_ShowCursor(SDL_TRUE);
                 SDL_DestroyWindow(sdlWindow);
                 sdlWindow = nullptr;
+#ifdef _WIN32
                 hWndVisGeneric = nullptr;
+#endif
             }
             break;
         }
@@ -1150,7 +1400,7 @@ void setLogicFp()
 }
 
 //-------------------------------------------------
-#ifndef PERIMETER_EXODUS
+#ifdef _WIN32
 //TODO remove this ifdef block once dialog stuff is ported
 
 bool _setupFileDialog(std::string& filename, const char* initialDir, const char* extention, const char* title, bool save) {
@@ -1199,20 +1449,22 @@ bool _setupFileDialog(std::string& filename, const char* initialDir, const char*
 
 bool openFileDialog(std::string& filename, const char* initialDir, const char* extention, const char* title)
 {
-#ifndef PERIMETER_EXODUS
+#ifdef _WIN32
     return _setupFileDialog(filename, initialDir, extention, title, false);
 #else
 	//TODO
+    fprintf(stderr, "openFileDialog not implemented for this platform\n");
 	return false;
 #endif
 }
 
 bool saveFileDialog(std::string& filename, const char* initialDir, const char* extention, const char* title)
 {
-#ifndef PERIMETER_EXODUS
+#ifdef _WIN32
     return _setupFileDialog(filename, initialDir, extention, title, true);
 #else
     //TODO
+    fprintf(stderr, "saveFileDialog not implemented for this platform\n");
     return false;
 #endif
 }
@@ -1222,7 +1474,7 @@ const char* popupMenu(std::vector<const char*> items) // returns zero if cancel
 	if(items.empty())
 		return 0;
 
-#ifndef PERIMETER_EXODUS
+#ifdef _WIN32
 	HMENU hMenu = CreatePopupMenu();
 	
 	std::vector<const char*>::iterator i;
@@ -1252,7 +1504,7 @@ int popupMenuIndex(std::vector<const char*> items) // returns -1 if cancel
 	if(items.empty())
 		return -1;
 
-#ifndef PERIMETER_EXODUS
+#ifdef _WIN32
 	HMENU hMenu = CreatePopupMenu();
 	
 	std::vector<const char*>::iterator i;
@@ -1281,7 +1533,7 @@ int popupMenuIndex(std::vector<const char*> items) // returns -1 if cancel
 
 //-----------------------------------------
 static std::string editTextString;
-#ifndef PERIMETER_EXODUS
+#ifdef _WIN32
 static INT_PTR CALLBACK DialogProc(HWND hwnd,UINT msg,WPARAM wParam,LPARAM lParam)
 {
 	switch(msg)
@@ -1326,7 +1578,7 @@ static INT_PTR CALLBACK DialogProc(HWND hwnd,UINT msg,WPARAM wParam,LPARAM lPara
 const char* editText(const char* defaultValue)
 {
 	editTextString = defaultValue;
-#ifndef PERIMETER_EXODUS
+#ifdef _WIN32
 	DialogBox(GetModuleHandle(0),MAKEINTRESOURCE(IDD_DIALOG_INPUT_TEXT),hWndVisGeneric,DialogProc);
 #else
     //TODO
@@ -1338,7 +1590,7 @@ const char* editText(const char* defaultValue)
 const char* editTextMultiLine(const char* defaultValue, void* hwnd)
 {
 	editTextString = defaultValue;
-#ifndef PERIMETER_EXODUS
+#ifdef _WIN32
 	DialogBox(GetModuleHandle(0),MAKEINTRESOURCE(IDD_DIALOG_INPUT_TEXT_MULTILINE), static_cast<HWND>(hwnd), DialogProc);
 #else
     //TODO

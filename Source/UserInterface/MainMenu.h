@@ -5,7 +5,21 @@ std::string getItemTextFromBase(const char *keyStr);
 
 const char* getMapName(const char* keyStr);
 
-void loadMapVector(std::vector<MissionDescription>& mapVector, const std::string& path, const std::string& mask, bool replay = false);
+void loadMapVector(
+        std::vector<MissionDescription>& maps,
+        const std::vector<const char*>& paths,
+        const std::string& mask,
+        bool replay = false
+);
+
+void loadMapVector(
+        std::vector<MissionDescription>& maps,
+        const std::string& path,
+        const std::string& mask,
+        bool replay = false
+);
+
+void switchGameContent(GAME_CONTENT selected, const std::string& initial_menu);
 
 void checkMissionDescription(int index, std::vector<MissionDescription>& mVect, GameType gameType);
 

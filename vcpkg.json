@@ -1,19 +1,13 @@
 {
 	"name": "perimeter",
-	"version": "3.0.0",
+	"version": "3.1.10",
 	"dependencies": [
 		"zlib",
 		"boost-stacktrace",
-		"boost-iterator",
-		"boost-type-index",
-		"libvorbis",
 		"libvpx",
 		"sdl2",
 		"sdl2-image",
-		{
-			"name": "sdl2-mixer",
-			"features": [ "dynamic-load", "libvorbis" ]
-		},
+		"sdl2-mixer",
 		"sdl2-net",
 		{
 			"name": "ffmpeg",

@@ -18,20 +18,24 @@ extern int DEFAULT_TERRAIN;
 
 vrtMap vMap;
 
-char* vrtMap::worldDataFileLinear = "output.vmp";
-char* vrtMap::worldIniFile        = "world.ini";
+const char* vrtMap::worldDataFileLinear = "output.vmp";
+const char* vrtMap::worldIniFile        = "world.ini";
 //char* vrtMap::worldParamZPIniFile = "paramzp.ini";
-char* vrtMap::worldNetDataFile    = "output.vpr";
-char* vrtMap::worldBuildScenarioFile = "output.vsc";
-char* vrtMap::worldGeoPalFile     = "inGeo.act";
-char* vrtMap::worldDamPalFile     = "inDam.act";
-char* vrtMap::worldLeveledTextureFile= "leveledSurfaceTexture.tga";
-char* vrtMap::worldHardnessFile= "hardness.bin";
+const char* vrtMap::worldNetDataFile    = "output.vpr";
+const char* vrtMap::worldBuildScenarioFile = "output.vsc";
+const char* vrtMap::worldGeoPalFile     = "inGeo.act";
+const char* vrtMap::worldDamPalFile     = "inDam.act";
+#ifdef GPX
+const char* vrtMap::worldLeveledTextureFile= "leveledSurfaceTexture.surf";
+#else
+const char* vrtMap::worldLeveledTextureFile= "leveledSurfaceTexture.tga";
+#endif
+const char* vrtMap::worldHardnessFile= "hardness.bin";
 
-char* vrtMap::worldDataFile= "world.cls";
-char* vrtMap::worldDataFileSection= "WorldData";
+const char* vrtMap::worldDataFile= "world.cls";
+const char* vrtMap::worldDataFileSection= "WorldData";
 
-char* vrtMap::worldRGBCache  = "cache.tga";
+const char* vrtMap::worldRGBCache  = "cache.tga";
 
 
 unsigned char vrtMap::GetGeoType(int offset, int h) 
@@ -83,6 +87,73 @@ bool isWorldIDValid(int worldID) {
 	return (worldID < vMap.maxWorld && worldID >= 0);
 }
 
+void vrtMap::compressWorlds(int mode) {
+    fprintf(stdout, "compressWorlds: mode %d\n", mode);
+    sVmpHeader VmpHeader;
+    XStream fstream;
+    fstream.ErrHUsed = false;
+    for (int id = 0; id < vMap.maxWorld; ++id) {
+        std::string output_vmp = GetTargetName(id, worldDataFileLinear);
+        fprintf(stdout, "%s\n", vMap.wTable[id].name.c_str());
+        
+        //Read file
+        XBuffer fmap(0, true);
+        if (!fstream.open(output_vmp, XS_IN)) {
+            fprintf(stderr, "VMP file not found\n");
+            continue;
+        }
+        fstream.seek(0,XS_BEG);
+        fstream.read(&VmpHeader,sizeof(VmpHeader));
+        int64_t flen = fstream.size() - fstream.tell();
+        
+        //Decode header
+        if (VmpHeader.cmpID("S2T0")) {
+            if (mode == 0) {
+                continue;
+            }
+            fmap.realloc(flen);
+            fstream.read(fmap.buf, flen);
+            fmap.set(flen, XB_BEG);
+        } else if (VmpHeader.cmpID("S2T1")) {
+            if (mode == 1) {
+                continue;
+            }
+            XBuffer tmp(flen, false);
+            fstream.read(tmp.buf, flen);
+            if (tmp.uncompress(fmap) != 0) {
+                ErrH.Abort("Error decompressing world");
+            }
+        }
+        fstream.close();
+        
+        //Act on mode
+        if (mode == 0) {
+            VmpHeader.setID("S2T0");
+            //fmap is already uncompressed
+        } else if (mode == 1) {
+            VmpHeader.setID("S2T1");
+            XBuffer tmp(fmap.length(), true);
+            int result = fmap.compress(tmp);
+            if (result != 0) {
+                ErrH.Abort("Error compressing world");
+            }
+            fmap = std::move(tmp);
+        } else {
+            ErrH.Abort("Unsupported compression mode");
+        }
+
+        //Write back
+        fprintf(stdout, "%s %s\n", VmpHeader.id, output_vmp.c_str());
+        if (!fstream.open(output_vmp, XS_OUT)) {
+            ErrH.Abort("Error opening VMP for write");
+        }
+        fstream.seek(0,XS_BEG);
+        fstream.write(&VmpHeader, sizeof(VmpHeader));
+        fstream.write(fmap.buf, fmap.tell());
+        fstream.close();
+    }
+}
+
 std::string GetTargetName(int numWorld, const char* name)
 {
 	if ( !isWorldIDValid(numWorld) ) ErrH.Abort("World Index out of range");
@@ -106,9 +177,7 @@ std::string safeGetTargetName(int numWorld, const char* name)
     return GetTargetName(numWorld, name);
 }
 
-vrtMap::vrtMap(void)
-: fmap(0)//, kmap(0)
-{
+vrtMap::vrtMap() {
 	GeonetMESH=200;
 	cWorld = -1;
 
@@ -179,7 +248,7 @@ vrtMap::~vrtMap(void)
 {
 	cWorld = -1;
 
-	if(changedT) { delete changedT; changedT = NULL; }
+	if(changedT) { delete[] changedT; changedT = NULL; }
 	if(gridChAreas) { delete [] gridChAreas; gridChAreas = NULL; }
 	if(gridChAreas2) { delete [] gridChAreas2; gridChAreas2 = NULL;}
 
@@ -299,6 +368,10 @@ int vrtMap::getWorld_V_SIZE(int idxWorld)
 	return V_size;
 }
 
+bool vrtMap::hasWorldData() {
+    std::string path = GetTargetName(worldDataFileLinear);
+    return !path.empty() && std::filesystem::exists(std::filesystem::u8path(path));
+}
 
 void vrtMap::analyzeINI(const char* name)
 {
@@ -391,16 +464,14 @@ void vrtMap::selectUsedWorld(char* _patch2World)
 	releaseChAreaBuf();
 	allocChAreaBuf();
 
-	int exist = 1;
-	if(!fmap.open(GetTargetName(worldDataFileLinear),XS_IN)) exist = 0;
-	else fmap.close();
+	bool exist = hasWorldData();
 
 	if(!exist) {
-		if(buildWorld()) exist=1;
+		if(buildWorld()) exist=true;
 	}
 
-	if(!exist) ErrH.Abort("Can't load world",XERR_USER,-1,GetTargetName(worldDataFileLinear));
-
+	if(!exist) ErrH.Abort("Can't load world",XERR_USER,-1,GetTargetName("").c_str());
+    
 	LoadVPR();
 	RenderPrepare1();
 
@@ -410,7 +481,7 @@ void vrtMap::selectUsedWorld(char* _patch2World)
 
 #else //если Периметр
 //Для Периметра
-void vrtMap::prepare(char* name)
+void vrtMap::prepare(const char* name)
 {
 	//Подготовка круглых инструментов
 	landPrepare();
@@ -420,7 +491,7 @@ void vrtMap::prepare(char* name)
 
 	//Scan resources worlds and create table with name and path
 	wTable.clear();
-    for (const auto& entry : get_content_entries_directory("resource/worlds")) {
+    for (const auto& entry : get_content_entries_directory(name)) {
         if (entry->is_directory) {
             std::filesystem::path path = std::filesystem::u8path(entry->path_content);
             wTable.emplace_back(path.filename().u8string(), entry->key);
@@ -428,13 +499,17 @@ void vrtMap::prepare(char* name)
     }
     maxWorld = wTable.size();
     if(maxWorld < 1) ErrH.Abort("Empty world list");
+
+    int compress_mode = -1;
+    check_command_line_parameter("compress_worlds", compress_mode);
+    if (0 <= compress_mode) { 
+        compressWorlds(compress_mode);
+    }
 }
 
 //Для Периметра
 void vrtMap::selectUsedWorld(int nWorld)
 {
-	XRndSet(1);
-
 	UndoDispatcher_KillAllUndo(); //Очистка всего буфера Undo-Redo
 
 // reload
@@ -457,15 +532,13 @@ void vrtMap::selectUsedWorld(int nWorld)
 	releaseChAreaBuf();
 	allocChAreaBuf();
 
-	int exist = 1;
-	if(!fmap.open(GetTargetName(worldDataFileLinear),XS_IN)) exist = 0;
-	else fmap.close();
+	bool exist = hasWorldData();
 
 	if(!exist) {
-		if(buildWorld()) exist=1;
+		if(buildWorld()) exist=true;
 	}
 
-	if(!exist) ErrH.Abort("Can't load world",XERR_USER,-1,GetTargetName(worldDataFileLinear).c_str());
+	if(!exist) ErrH.Abort("Can't load world",XERR_USER,-1,GetTargetName("").c_str());
 
 	LoadVPR();
 	RenderPrepare1();
@@ -505,7 +578,7 @@ void vrtMap::setupGeneralVariable()
 
 void vrtMap::releaseChAreaBuf()
 {
-	if(changedT){ delete changedT; changedT = 0; }
+	if(changedT){ delete[] changedT; changedT = 0; }
 
 	if(gridChAreas) { delete [] gridChAreas; gridChAreas=0; }
 	if(gridChAreas2) { delete [] gridChAreas2; gridChAreas2=0; }
@@ -565,16 +638,15 @@ void vrtMap::newLoad(const char* dirName)
 	releaseChAreaBuf();
 	allocChAreaBuf();
 
-	int exist = 1;
-	if(!fmap.open(GetTargetName(worldDataFileLinear),XS_IN)) exist = 0;
-	else fmap.close();
 
-	if(!exist) {
-		if(buildWorld()) exist=1;
-	}
+    bool exist = hasWorldData();
 
-	if(!exist) ErrH.Abort("Can't load world",XERR_USER,-1,GetTargetName(worldDataFileLinear).c_str());
+    if(!exist) {
+        if(buildWorld()) exist=true;
+    }
 
+    if(!exist) ErrH.Abort("Can't load world",XERR_USER,-1,GetTargetName("").c_str());
+    
 	LoadVPR();
 	RenderPrepare1();
 
@@ -804,14 +876,31 @@ void vrtMap::fullLoad(bool flag_fastLoad)
 	if(VxGBuf!=0) releaseMem4Buf();
 	allocMem4Buf();
 
-	if (!fmap.open(GetTargetName(worldDataFileLinear), XS_IN)) {
+    //Read file
+    XBuffer fmap(0, true);
+    XStream fstream;
+	if (!fstream.open(GetTargetName(worldDataFileLinear), XS_IN)) {
         ErrH.Abort("VMP file not found");
     }
-
-	//const char id[4]={'S','2','T','0'};
-	fmap.seek(0,XS_BEG);
-	fmap.read(&VmpHeader,sizeof(VmpHeader));
-	if (VmpHeader.cmpID("S2T0")) { //(*(int*)VmpHeader.id == *(int*)id )
+    fstream.seek(0,XS_BEG);
+    fstream.read(&VmpHeader,sizeof(VmpHeader));
+    int64_t flen = fstream.size() - fstream.tell();
+    
+    //Read content according to header ID
+	if (VmpHeader.cmpID("S2T0")) {
+        fmap.realloc(flen);
+        fstream.read(fmap.buf, flen);
+    } else if (VmpHeader.cmpID("S2T1")) {
+        XBuffer tmp(flen, false);
+        fstream.read(tmp.buf, flen);
+        if (tmp.uncompress(fmap) != 0) {
+            ErrH.Abort("Error decompressing VMP");
+        }
+        fmap.set(0, XB_BEG);
+    }
+    
+    fstream.close();
+    if (0 < fmap.length()) {
 		fmap.read(&VxGBuf[0],XS_Buf*YS_Buf);
 		fmap.read(&VxDBuf[0],XS_Buf*YS_Buf);
 		fmap.read(&AtrBuf[0],XS_Buf*YS_Buf);
@@ -837,10 +926,9 @@ void vrtMap::fullLoad(bool flag_fastLoad)
 		//	changedT[i]=0;
 		//	RenderStr(i);
 		//}
-	}
-	else ErrH.Abort("VMP file is not TRUE version");
-
-	fmap.close();
+	} else {
+        ErrH.Abort("VMP file format unknown");
+    }
 
 	loadLeveledTexture(); //необходимо вызывать после загрузки VxDBuf и палитры
 
@@ -1057,7 +1145,7 @@ void vrtMap::generateChAreasInformation(XBuffer& out)
 
 unsigned int vrtMap::getChAreasInformationCRC() 
 { 
-	XBuffer buf(256, 1);
+	XBuffer buf(256, true);
 	generateChAreasInformation(buf);
 	return crc32((unsigned char*)buf.address(), buf.tell(), startCRC32); 
 }
@@ -1071,10 +1159,11 @@ void vrtMap::compareChAreasInformation(unsigned char* pFirstCAI, unsigned char* 
 	pSecondCAI+=sizeof(sizeSecond);
 
 	typeCoordinatChAreas curFtX, curFtY, curSdX, curSdY;
-	unsigned int fcrc, scrc;
+	unsigned int fcrc = 0;
+    unsigned int scrc = 0;
 
-	bool flag_get_first=1;
-	bool flag_get_second=1;
+	bool flag_get_first = true;
+	bool flag_get_second = true;
 	while(sizeFirst || sizeSecond){
 		if(flag_get_first){
 			if(sizeFirst){
@@ -1401,6 +1490,7 @@ void vrtMap::convertPal2TableTexCol()
 void vrtMap::save3BufOnly(void)
 {
 	sVmpHeader VmpHeader;
+    XStream fmap;
 	fmap.open(GetTargetName(worldDataFileLinear), XS_OUT);
 	//const char id[4]={'S','2','T','0'};
 	//int i;
@@ -1449,7 +1539,7 @@ bool vrtMap::saveAllWorldAs(const char* _patch2world)
 	XBuffer strIn, strOut;
 	strIn < wTable[0].dir < "\\" < worldIniFile;
 	strOut < _patch2world < "\\" < worldIniFile;
-	if(!CopyFile(strIn, strOut, FALSE)){
+	if(!CopyFile(strIn, strOut, false)){
 		return 0;
 	}
 	free(wTable[0].name);
@@ -1471,6 +1561,7 @@ void vrtMap::restore3Buf(void)
 	UndoDispatcher_KillAllUndo(); //Очистка всего буфера Undo-Redo
 	loadGeoDamPal();
 
+    XStream fmap;
 	fmap.open(GetTargetName(worldDataFileLinear),XS_IN | XS_OUT);
 	//const char id[4]={'S','2','T','0'};
 	fmap.seek(0,XS_BEG);
@@ -1576,8 +1667,8 @@ void vrtMap::scaling16(int cx,int cy,int xc,int yc,int xside,int yside, unsigned
 
 	unsigned char* dataRnr;
 	unsigned char* dataSur;
-	unsigned char* dataVxD;
-	unsigned char* dataVxG;
+	//unsigned char* dataVxD;
+	//unsigned char* dataVxG;
 	unsigned char* dataAtr;
 	unsigned char* dataTex;
 
@@ -1593,8 +1684,8 @@ void vrtMap::scaling16(int cx,int cy,int xc,int yc,int xside,int yside, unsigned
 				fy = tfy;
 				dataRnr = lc + YCYCL(fy >> 16)*XS_Buf;
 				dataSur= ls + YCYCL(fy >> 16)*XS_Buf;
-				dataVxD= lvd + YCYCL(fy >> 16)*XS_Buf;
-				dataVxG= lvg + YCYCL(fy >> 16)*XS_Buf;
+				//dataVxD= lvd + YCYCL(fy >> 16)*XS_Buf;
+				//dataVxG= lvg + YCYCL(fy >> 16)*XS_Buf;
 				dataAtr= la + YCYCL(fy >> 16)*XS_Buf;
 				dataTex=&(LvdTex[0]) + (((fy >> 16)&LvdTex_clip_mask_y)<<LvdTex_X_SIZE_POWER);
 #ifdef _SURMAP_
@@ -1714,8 +1805,8 @@ void vrtMap::scaling32(int cx,int cy,int xc,int yc,int xside,int yside, unsigned
 
 	unsigned char* dataRnr;
 	unsigned char* dataSur;
-	unsigned char* dataVxD;
-	unsigned char* dataVxG;
+	//unsigned char* dataVxD;
+	//unsigned char* dataVxG;
 	unsigned char* dataAtr;
 	unsigned char* dataTex;
 
@@ -1730,8 +1821,8 @@ void vrtMap::scaling32(int cx,int cy,int xc,int yc,int xside,int yside, unsigned
 				fy = tfy;
 				dataRnr = lc + YCYCL(fy >> 16)*XS_Buf;
 				dataSur= ls + YCYCL(fy >> 16)*XS_Buf;
-				dataVxD= lvd + YCYCL(fy >> 16)*XS_Buf;
-				dataVxG= lvg + YCYCL(fy >> 16)*XS_Buf;
+				//dataVxD= lvd + YCYCL(fy >> 16)*XS_Buf;
+				//dataVxG= lvg + YCYCL(fy >> 16)*XS_Buf;
 				dataAtr= la + YCYCL(fy >> 16)*XS_Buf;
 				dataTex=&(LvdTex[0]) + (((fy >> 16)&LvdTex_clip_mask_y)<<LvdTex_X_SIZE_POWER);
 #ifdef _SURMAP_
@@ -2324,7 +2415,8 @@ void vrtMap::voxSet(int x,int y,int delta,int terrain) //terrain=-1 опреде
 
 		h=tstMinMaxVox(h+delta);
 		VxGBuf[offset]=h >>VX_FRACTION;
-		AtrBuf[offset]=(h &VX_FRACTION_MASK) | (AtrBuf[offset]&=~VX_FRACTION_MASK);
+        AtrBuf[offset] &= ~VX_FRACTION_MASK;
+		AtrBuf[offset] |= h &VX_FRACTION_MASK;
 		SetTer(offset,f3d.calc(x, y, h));//>>VX_FRACTION
 	}
 	else{ //если выступает Dam слой
@@ -2335,7 +2427,8 @@ void vrtMap::voxSet(int x,int y,int delta,int terrain) //terrain=-1 опреде
 		h2=tstMinMaxVox(h+delta);
 		dg=(h2>>VX_FRACTION)-(h>>VX_FRACTION);
 		VxDBuf[offset]=h2 >>VX_FRACTION;
-		AtrBuf[offset]=(h2 &VX_FRACTION_MASK) | (AtrBuf[offset]&=~VX_FRACTION_MASK);
+        AtrBuf[offset] &= ~VX_FRACTION_MASK;
+        AtrBuf[offset] |= h2 &VX_FRACTION_MASK;
 		h=VxGBuf[offset];
 		h+=dg; if(h<0)h=0; if(h>255)h=255;
 		VxGBuf[offset]=h;
@@ -2529,59 +2622,6 @@ char* vrtMap::PrmFile::getAtom(void)
 	char* ret = p;
 	while(index < len && *p) p++, index++;
 	return ret;
-}
-
-unsigned char* convert_vox2vid(int vox, char* buf)
-{
-	int fraction,cel;
-	if(vox>=0){
-		fraction=vox & VX_FRACTION_MASK;
-		cel=vox>>VX_FRACTION;
-		sprintf(buf,"%4hi.%02hu\0",cel,fraction);
-	}
-	else {
-		fraction= (-vox) & VX_FRACTION_MASK; //Дробную часть надо показывать без знака
-		cel=(-vox)>>VX_FRACTION;				
-		sprintf(buf,"-%04hi.%02hu\0",cel,fraction);
-	}
-	return (unsigned char*)buf;
-}
-int convert_vid2vox(char* buf)
-{
-	char cc[10]={'0','0','\0'};
-	int fraction=0;
-	short cels=0;
-	sscanf(buf,"%hd%*c%s",&cels,cc);
-	float Znak=0;
-	sscanf(buf,"%f",&Znak);
-	if(cc[1]==0) cc[1]='0';
-	cc[2]=0;
-	fraction=atoi(cc);
-	if(fraction>VX_FRACTION_MASK)fraction=VX_FRACTION_MASK;
-	int cel=(int)cels; //Необходимо т.к. 
-	int vox;
-	if (Znak>=0) vox= (cel<<VX_FRACTION) | (fraction);
-	else {
-		vox= ((-cel)<<VX_FRACTION) | (fraction); //Дробная часть знака не имеет
-		vox=-vox;
-	}
-	return vox;
-}
-
-void save2Stl(void)
-{
-
-	int x,y;
-	int * masS;
-	masS=new int[vMap.V_SIZE*vMap.H_SIZE];
-	for(y=0; y<vMap.V_SIZE; y++){
-		for(x=0; x<vMap.H_SIZE; x++){
-			masS[x+y*vMap.H_SIZE]=vMap.GetAlt(x,y);
-		}
-	}
-	XStream f("Stl.vmp",XS_OUT);
-	f.write(&masS[0],sizeof(int)*vMap.V_SIZE*vMap.H_SIZE);
-	delete [] masS;
 }
 
 #ifdef _SURMAP_
@@ -3100,7 +3140,7 @@ void vrtMap::saveMapWithOtherSize4To2(const char* _patch2New2x2World)
 	XBuffer strIn, strOut;
 	strIn < wTable[0].dir < "\\" < worldIniFile;
 	strOut < _patch2New2x2World < "\\" < worldIniFile;
-	if(!CopyFile(strIn, strOut, FALSE)){
+	if(!CopyFile(strIn, strOut, false)){
 		return;// 0;
 	}
 	XBuffer tbuf;

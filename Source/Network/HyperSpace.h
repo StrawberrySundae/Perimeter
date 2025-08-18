@@ -22,7 +22,8 @@ public:
 
 	void SetServerSpeedScale(float scale){ ServerSpeedScale = scale; }
 
-	void ShowInfo();
+    virtual void ShowInfo() {};
+    std::string GetNetInfo();
 
 	virtual bool ReceiveEvent(terEventID event, InOutNetComBuffer& in);
 
@@ -66,7 +67,7 @@ private:
 	int EventWaitTime;
 	int MaxEventTime;
 	int RealMaxEventTime;
-	int EventLagHole;
+	//int EventLagHole;
 
 	int AverageEventTime;
 	int AverageEventCount;
@@ -85,6 +86,8 @@ private:
 	float MinCorrection;
 
 	float ServerSpeedScale;
+    
+    bool chatTipDisplayed = false;
 
 //--------------------------
 private:

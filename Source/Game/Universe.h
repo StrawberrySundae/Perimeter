@@ -1,6 +1,8 @@
 #ifndef __UNIVERSE_H__
 #define __UNIVERSE_H__
 
+#include "NetConnection.h"
+#include "NetComEventBuffer.h"
 #include "GenericControls.h"
 #include "SafeMath.h"
 #include "HyperSpace.h"
@@ -28,7 +30,7 @@ public:
 	~terUniverse();
 
     void clear();
-	void Quant();
+	void Quant() override;
 	void AvatarQuant();
 	void PrepareQuant();
 	void triggerQuant();
@@ -54,16 +56,16 @@ public:
 
 	bool soundEvent(SoundEventID event_id);
 
-	void checkEvent(const class Event& event);
+    void checkEvent(const class Event* event);
 
-	void ShowInfo();
+	void ShowInfo() override;
 
 	void makeCommand(CommandID id, int data);
 	void makeCommand2D(CommandID command_id, const Vect3f& position, CommandSelectionMode mode);
 	void makeCommandSubtle(CommandID command_id, const Vect3f& position, CommandSelectionMode mode);
 	void makeCommand(CommandID command_id, const Vect3f& position, CommandSelectionMode mode);
 	void makeCommand(CommandID command_id, terUnitBase* actionObject, CommandSelectionMode mode);
-	void toggleHold();
+	void toggleHold(bool pause);
 
 	void setShouldIgnoreIntfCommands(bool shouldIgnoreIntfCommands) {
 		PlayerVect::iterator pi;
@@ -72,9 +74,9 @@ public:
 		}
 	}
 
-	void receiveCommand(const netCommand4G_UnitCommand& command);
-	void receiveCommand(const netCommand4G_Region& reg);
-	bool forcedDefeat(int playerID);
+	void receiveCommand(const netCommand4G_UnitCommand& command) override;
+	void receiveCommand(const netCommand4G_Region& reg) override;
+	bool forcedDefeat(int playerID) override;
 
     terUnitBase* TraceUnit(const Vect2f& pos, terUnitID* unit_filter = nullptr);
 	int SelectUnit(terUnitBase* p);
@@ -93,7 +95,7 @@ public:
 
 	void changeOwner(terUnitBase* unit, terPlayer* player);
 
-	void updateClusterColumn(const struct sRect& rect);
+	void updateClusterColumn(const struct sRectS& rect);
 	const Column& clusterColumn() const { return cluster_column_; }
 
 	int quantCounter() const { return quant_counter_; }
@@ -135,7 +137,6 @@ private:
 	bool enableEventChecking_;
 
 	int quant_counter_;
-	float interpolation_factor_;
 
 	bool fieldTransparent_;
 
@@ -166,8 +167,6 @@ private:
 inline terUniverse* universe() { return terUniverse::universe_; }
 
 extern class FieldDispatcher* field_dispatcher;
-
-extern struct CEffectManager* terEffectD;
 
 //inline int terObjectBoxTest(const Vect3f& min, const Vect3f& max, sPlane4f* p)
 //{

@@ -1,4 +1,5 @@
 #include "StdAfxRD.h"
+#include "DrawBuffer.h"
 #include "MeshTri.h"
 
 //Функция пересечения треугольника с отрезком
@@ -38,69 +39,56 @@ bool Intersection(const Vect3f& a,const Vect3f& b,const Vect3f& c,
 
 cMeshTri::cMeshTri()
 {
-	ib=NULL;
-	vb=NULL;
+	db = nullptr;
 	OffsetPolygon=-1;
 	OffsetVertex=-1;
 	NumPolygon=-1;
 	NumVertex=-1;
+}
 
-//	vbSoft=NULL;
-//	ibSoft=NULL;
-}
-cMeshTri::~cMeshTri()
-{
-}
+cMeshTri::~cMeshTri() = default;
 
 void cMeshTri::GetBoundingBox(Vect3f &Min,Vect3f &Max)
 {
-	void *pVertex=gb_RenderDevice->LockVertexBuffer(*vb);
 	Min.set(1e30f,1e30f,1e30f),Max.set(-1e30f,-1e30f,-1e30f);
+    Vect3f v;
 	for(int i=0;i<NumVertex;i++)
 	{
-		Vect3f &v=GetPos(pVertex,i+OffsetVertex);
+        VertexBuffer[i].getPos(v);
 		Min=::GetMin(Min,v);
 		Max=::GetMax(Max,v);
 	}
-	gb_RenderDevice->UnlockVertexBuffer(*vb);
 }
-void cMeshTri::InvertTri()
-{
-	sPolygon *Polygon=gb_RenderDevice->LockIndexBuffer(*ib);
-	void *pVertex=gb_RenderDevice->LockVertexBuffer(*vb);
-	int i;
-	for(i=0;i<NumVertex;i++)
-	{
-	    Vect3f vv = -GetNormal(pVertex,i+OffsetVertex);
-		Vect3f &v=vv;
-		v=-v;
-	}
-	for(i=0;i<NumPolygon;i++)
-	{
-		sPolygon &p=Polygon[i+OffsetPolygon];
+void cMeshTri::InvertTri() {
+    xassert(!db->IsLocked());
+	sPolygon* Polygon = reinterpret_cast<sPolygon*>(gb_RenderDevice->LockIndexBufferRange(db->ib, OffsetPolygon*sPolygon::PN, NumPolygon*sPolygon::PN));
+    if (!Polygon) {
+        xassert(0);
+        return;
+    }
+    for (int i = 0; i < NumPolygon; i++) {
+		sPolygon& p = Polygon[i];
 		int tmp=p.p1; p.p1=p.p2; p.p2=tmp;
+        PolygonBuffer[i] = p;
 	}
-	gb_RenderDevice->UnlockVertexBuffer(*vb);
-	gb_RenderDevice->UnlockIndexBuffer(*ib);
-}
-void cMeshTri::SetPosition(const MatXf &matrix)							
-{ 
-	void *pVertex=gb_RenderDevice->LockVertexBuffer(*vb);
-	for(int i=0;i<NumVertex;i++)
-		GetPos(pVertex,i+OffsetVertex)=matrix.xformPoint(GetPos(pVertex,i+OffsetVertex)); 
-	gb_RenderDevice->UnlockVertexBuffer(*vb);
+	gb_RenderDevice->UnlockIndexBuffer(db->ib);
 }
 
 void cMeshTri::CalcBumpST()
 {
-	if(vb->size!=sizeof(sVertexDot3))
+    //TODO implement this for sokol
+    if (gb_RenderDevice->GetRenderSelection() != DEVICE_D3D9) {
+        return;
+    }
+    
+#ifdef PERIMETER_D3D9
+	if(db->vb.VertexSize!=sizeof(sVertexDot3))
 	{
 		VISASSERT(0);
 		return;
 	}
 
-	sVertexDot3 *v=(sVertexDot3*)gb_RenderDevice->LockVertexBuffer(*vb);
-	sPolygon *Polygon=gb_RenderDevice->LockIndexBuffer(*ib);
+	sVertexDot3 *v = static_cast<sVertexDot3*>(gb_RenderDevice->LockVertexBuffer(db->vb));
 	int i;
 	for(i=0;i<NumVertex;i++)
 	{
@@ -112,12 +100,12 @@ void cMeshTri::CalcBumpST()
 	{
 		Vect3f cp;
 		Vect3f edge01,edge02;
-		sPolygon &p=Polygon[i+OffsetPolygon];
+		const sPolygon &p=PolygonBuffer[i];
 		sVertexDot3 &v0=v[p.p1],&v1=v[p.p2],&v2=v[p.p3];
 
 		// x, s, t
-		edge01.set( v1.pos.x-v0.pos.x, v1.u1()-v0.u1(), v1.v1()-v0.v1() );
-		edge02.set( v2.pos.x-v0.pos.x, v2.u1()-v0.u1(), v2.v1()-v0.v1() );
+		edge01.set( v1.x-v0.x, v1.u1()-v0.u1(), v1.v1()-v0.v1() );
+		edge02.set( v2.x-v0.x, v2.u1()-v0.u1(), v2.v1()-v0.v1() );
 
 		cp.cross(edge01,edge02);
 		if (xm::abs(cp.x) > FLT_EPS )
@@ -133,8 +121,8 @@ void cMeshTri::CalcBumpST()
 		}
 
 		// y, s, t
-		edge01.set( v1.pos.y-v0.pos.y, v1.u1()-v0.u1(), v1.v1()-v0.v1() );
-		edge02.set( v2.pos.y-v0.pos.y, v2.u1()-v0.u1(), v2.v1()-v0.v1() );
+		edge01.set( v1.y-v0.y, v1.u1()-v0.u1(), v1.v1()-v0.v1() );
+		edge02.set( v2.y-v0.y, v2.u1()-v0.u1(), v2.v1()-v0.v1() );
 
 		cp.cross(edge01, edge02);
 		if (xm::abs(cp.x) > FLT_EPS )
@@ -150,8 +138,8 @@ void cMeshTri::CalcBumpST()
 		}
 
 		// z, s, t
-		edge01.set( v1.pos.z-v0.pos.z, v1.u1()-v0.u1(), v1.v1()-v0.v1() );
-		edge02.set( v2.pos.z-v0.pos.z, v2.u1()-v0.u1(), v2.v1()-v0.v1() );
+		edge01.set( v1.z-v0.z, v1.u1()-v0.u1(), v1.v1()-v0.v1() );
+		edge02.set( v2.z-v0.z, v2.u1()-v0.u1(), v2.v1()-v0.v1() );
 
 		cp.cross(edge01,edge02);
 		if (xm::abs(cp.x) > FLT_EPS )
@@ -173,17 +161,18 @@ void cMeshTri::CalcBumpST()
   		cv.S.Normalize();
 		cv.T.Normalize();
   		cv.SxT.cross(cv.S, cv.T);
-  		cv.n.Normalize();
-    		
+        Vect3f n(cv.n);
+  		n.Normalize();
+        n.write(cv.n);
+
   		// Get the direction of the SxT vector
-  		if (cv.SxT.dot(cv.n) < 0.0f)
-  		{
+  		if (cv.SxT.dot(n) < 0.0f) {
   			cv.SxT = -cv.SxT;
   		}
 	}
 
-	gb_RenderDevice->UnlockVertexBuffer(*vb);
-	gb_RenderDevice->UnlockIndexBuffer(*ib);
+	gb_RenderDevice->UnlockVertexBuffer(db->vb);
+#endif
 }
 
 bool cMeshTri::Intersect(const Vect3f& p0,const Vect3f& p1)
@@ -191,47 +180,21 @@ bool cMeshTri::Intersect(const Vect3f& p0,const Vect3f& p1)
 //	return true;
 //*
 	bool intersect=false;
-	void *pVertex=gb_RenderDevice->LockVertexBuffer(*vb);
-	sPolygon* pIndex=gb_RenderDevice->LockIndexBuffer(*ib);
 	Vect3f pn=p1-p0;
 
-	for(int i=0;i<NumPolygon;i++)
-	{
-		sPolygon &p=pIndex[i+OffsetPolygon];
+	for(int i=0;i<NumPolygon;i++) {
+		sPolygon &p=PolygonBuffer[i];
 		float t;
-		Vect3f a=GetPos(pVertex,p.p1);
-		Vect3f b=GetPos(pVertex,p.p2);
-		Vect3f c=GetPos(pVertex,p.p3);
+        Vect3f a, b, c;
+		VertexBuffer[p.p1 - OffsetVertex].getPos(a);
+		VertexBuffer[p.p2 - OffsetVertex].getPos(b);
+		VertexBuffer[p.p3 - OffsetVertex].getPos(c);
 
-		if(Intersection(a,b,c,p0,p1,pn,t))
-		{
+		if (Intersection(a,b,c,p0,p1,pn,t)) {
 			intersect=true;
 			break;
 		}
 	}
-
-	gb_RenderDevice->UnlockIndexBuffer(*ib);
-	gb_RenderDevice->UnlockVertexBuffer(*vb);
+    
 	return intersect;
-/*/
-	bool intersect=false;
-	Vect3f pn=p1-p0;
-
-	for(int i=0;i<NumPolygon;i++)
-	{
-		sPolygon &p=ibSoft[i+OffsetPolygon];
-		float t;
-		Vect3f a=vbSoft[p.p1];
-		Vect3f b=vbSoft[p.p2];
-		Vect3f c=vbSoft[p.p3];
-
-		if(Intersection(a,b,c,p0,p1,pn,t))
-		{
-			intersect=true;
-			break;
-		}
-	}
-
-	return intersect;
-/**/
 }

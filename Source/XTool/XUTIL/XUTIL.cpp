@@ -8,60 +8,50 @@
 #include <cwchar>
 #include <cwctype>
 #include "tweaks.h"
-#ifdef _WIN32 
-#define WIN32_LEAN_AND_MEAN		// Exclude rarely-used stuff from Windows headers
-#include <windows.h>
-#endif
 #include "xutil.h"
 #include "xmath.h"
 
 std::wstring_convert<std::codecvt_utf8<char16_t>, char16_t> utf8cvt;
 
-#ifndef _WIN32
 bool argcv_setup_done = false;
-int __argc = 0;
-std::vector<const char*> __argv;
-#endif
-
-static unsigned int XRndValue = 83838383;
-
-unsigned int XRnd(unsigned int m)
-{ 
-	XRndValue = XRndValue*214013L + 2531011L;
-	if(!m)
-		return 0;
-	return ((XRndValue>> 16) & 0x7fff) % m; 
-}
-
-void XRndSet(unsigned int m)
-{
-	XRndValue = m;
-}
-
-unsigned int XRndGet()
-{
-	return XRndValue;
-}
+int app_argc = 0;
+std::vector<std::string> app_argv;
 
 void setup_argcv(int argc, char *argv[]) {
-#ifndef _WIN32
+    //Pick the args
     for(int i = 0; i < argc; i ++){
-        //printf("%d %s\n", i, argv[i]);
-        __argv.push_back(argv[i]);
-        __argc++;
+#ifdef DEBUG_ARGV
+        printf("setup_argcv args %d %s\n", i, argv[i]);
+#endif
+        app_argv.emplace_back(argv[i]);
+        app_argc++;
     }
     argcv_setup_done = true;
-#endif
 }
 
 void decode_version(const char* version_str, uint16_t version[3]) {
+    if (version_str == nullptr) return;
     XBuffer buf(const_cast<char*>(version_str), strlen(version_str) + 1);
+    version[0] = 0;
+    version[1] = 0;
+    version[2] = 0;
     char c;
+    if (*buf.buf == 'v') {
+        //Old versions had v before numbers, skip it
+        buf > c;
+    }
     buf >= version[0];
-    buf > c; if (c != '.') ErrH.Abort("Can't parse version", XERR_CRITICAL, 0, version_str);
+    buf > c;
+    if (c != '.') ErrH.Abort("Can't parse version", XERR_CRITICAL, 1, version_str);
     buf >= version[1];
-    buf > c; if (c != '.') ErrH.Abort("Can't parse version", XERR_CRITICAL, 1, version_str);
-    buf >= version[2];
+    buf > c;
+    if (c != '.') {
+        //Old x.YY format, transform to X.0.Y
+        version[2] = version[1];
+        version[1] = 0;
+    } else {
+        buf >= version[2];
+    }
 }
 
 int compare_versions(const uint16_t left[3], const uint16_t right[3]) {
@@ -79,15 +69,14 @@ int compare_versions(const uint16_t left[3], const char* right) {
 }
 
 const char* check_command_line(const char* switch_str) {
-#ifndef _WIN32
     if (!argcv_setup_done) {
         fprintf(stderr, "Called check_command_line %s before setup_argcv\n", switch_str);
+        xassert(0);
     }
-#endif
     std::string switch_key(switch_str);
     switch_key += "=";
-    for(int i = 1; i < __argc; i ++){
-        const char* arg = __argv[i];
+    for(int i = 1; i < app_argc; i ++){
+        const char* arg = app_argv[i].c_str();
         if (startsWith(arg, "tmp_")) {
             arg += 4;
         }
@@ -439,3 +428,84 @@ void encode_raw_double(XBuffer* buffer, double value) {
     (*buffer) < 'X' <= (*value_raw);
 }
 
+std::string BreakLongLines(const char* ptext, size_t max_width, char endline) {
+    std::string text;
+    if (ptext) {
+        size_t line_len = 0;
+        while (true) {
+            const char c = *ptext;
+            if (c == '\0') {
+                break;
+            }
+
+            ptext++;
+            if (c == endline) {
+                line_len = 0;
+                text += endline;
+            } else {
+                text += c;
+                line_len += 1;
+                if (line_len >= max_width) {
+                    line_len = 0;
+                    text += endline;
+                }
+            }
+        }
+    }
+    return text;
+}
+
+arch_flags computeArchFlags() {
+    arch_flags val = 0;
+
+    //Release build - 0 (1) bit
+#if defined(_FINAL_VERSION_) && !defined(PERIMETER_DEBUG)
+    //Don't set if debug_key_handler is active in Release
+        if (!check_command_line("debug_key_handler")) {
+            val |= 1;
+        }
+#endif
+
+    //Compiler type - 1-7 (7) bits
+    arch_flags compiler;
+#if defined(_MSC_VER)
+    compiler = 1;
+#elif defined(__clang__)
+    compiler = 2;
+#elif defined(__GNUC__)
+    compiler = 3; //Must be checked after clang as it also defines __GNUC__
+#else
+    compiler = 0;
+#endif
+    xassert(compiler <= 0x7F);
+    val |= compiler<<1;
+
+    //OS type - 8-15 (8) bits
+    arch_flags os;
+#if defined(__linux__)
+    os = 1;
+#elif defined(__APPLE__)
+    os = 2;
+#elif defined(_WIN32)
+        os = 3;
+#elif defined(EMSCRIPTEN)
+        os = 4;
+#else
+        os = 0;
+#endif
+    xassert(os <= 0xFF);
+    val |= os<<8;
+
+    //CPU type - 16-23 (4) bits
+    arch_flags cpu = 0;
+    //Arch - 16-17 bits (0 = under 32, 1 = 32, 2 = 64, 3 = above 64)
+    cpu |= (sizeof(void*) / 4) & 3;
+    //CPU endianness - 23 bit
+#if SDL_BYTEORDER == SDL_LIL_ENDIAN
+    cpu |= 1<<3;
+#endif
+    xassert(cpu <= 0xF);
+    val |= cpu<<16;
+
+    return val;
+}

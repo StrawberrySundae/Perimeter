@@ -1,24 +1,18 @@
 #include "StdAfxRD.h"
-#include "Scene.h"
-#include "TileMap.h"
-#include "ObjNode.h"
-#include "SpriteNode.h"
-#include "particle.h"
-#include "Trail.h"
-#include "Line3d.h"
-#include "ObjLibrary.h"
-#include "cZPlane.h"
-#include "CChaos.h"
 
 #include <climits>
-#include "../client/Silicon.h"
-#if defined(_MSC_VER) && (_MSC_VER < 1900)
-// non-standard header : https://developercommunity.visualstudio.com/t/msvc-142328019-is-missing-include-typeinfoh/734566
-#include <typeinfo.h>
-#else
 #include <typeinfo>
-#endif
-#include "../3dx/Lib3dx.h"
+
+#include "SafeCast.h"
+#include "Scene.h"
+#include "tilemap/TileMap.h"
+#include "ObjNode.h"
+#include "SpriteNode.h"
+#include "Line3d.h"
+#include "ObjLibrary.h"
+#include "cPlane.h"
+#include "CChaos.h"
+#include "../client/Silicon.h"
 
 FILE *gb_fSceneLog=NULL;
 
@@ -40,21 +34,18 @@ cScene::cScene() : cUnknownClass(KIND_SCENE)
 cScene::~cScene()
 {
 	DeleteAutoObject();
-	ObjLibrary=0;
+	ObjLibrary = nullptr;
 	Size.set(0,0);
 	CurrentTime=PreviousTime=0;
-	VISASSERT(grid.size()==0);
+    UpdateLists(INT_MAX);
 	grid.Release();
-/*	for(int i=GetNumberLight()-1;i>=0;i--)
-	{
-		cUnkLight *ULight=GetLight(i);
-		DetachLight(ULight);
-		ULight->Release();
-	}
-*/
-	UpdateLists(INT_MAX);
+    UnkLightArray.Release();
+#ifdef PERIMETER_DEBUG_ASSERT
+    std::vector<cIUnkClass*> list; //Empty as no object should be present at this point
+    CheckPendingObjects(list);
+#endif
 	VISASSERT(grid.size()==0);
-	VISASSERT(GetNumberLight()==0);
+	VISASSERT(UnkLightArray.size()==0);
 
 //	GetTexLibrary()->Compact();
 	RELEASE(StrencilShadowDrawNode);
@@ -73,12 +64,12 @@ void SaveKindObjNotFree()
 	}
 
 	FILE* f=fopen("obj_notfree.txt","wt");
-	typedef map<string,int> idmap;
+	typedef std::map<std::string,int> idmap;
 	idmap ids;
 	cCheckDelete* p;
 	for(p=cCheckDelete::GetDebugRoot();p;p=p->GetDebugNext())
 	{
-		const type_info& ti=typeid(*p);
+		const std::type_info& ti=typeid(*p);
 		ids[ti.name()]++;
 	}
 
@@ -130,26 +121,42 @@ void cScene::Animate()
 	if(dTime==0) return;
 	MTEnter enter(lock_draw);
 
-	// анимация объектов
-	grid.SetDetachNow(false);
-	for(sGrid2d::iterator it=grid.begin();it!=grid.end();)
-	{
-		cIUnkClass* p=*it;
-		if(p && p->GetAttr(ATTRUNKOBJ_IGNORE)==0) 
-		{
-			p->Animate(dTime);
-		}
-
-		grid.DetachAndIterate(it);
+    //Iterate objects
+    grid.DisableChanges(true);
+	for (auto el : grid) {
+#ifdef MTGVECTOR_USE_HANDLES
+        cIUnkClass* p = safe_cast<cIUnkClass*>(el->Get());
+#else
+        cIUnkClass* p = el;
+#endif
+		if (p) {
+            //Clear previously assigned lights, we do this always outside Animate() to avoid stale pointers
+            //Sometimes an object may skip Animate() and get ATTRUNKOBJ_IGNORE removed, while having stale lights in array
+            if (p->GetKind()==KIND_OBJ_NODE_ROOT) {
+                cObjectNodeRoot* r = safe_cast<cObjectNodeRoot*>(p);
+                r->GetLight().clear();
+            }
+            if (p->GetAttr(ATTRUNKOBJ_IGNORE) == 0) {
+                p->Animate(dTime);
+                //p might not be valid after this point!
+            }
+        }
 	}
-	grid.SetDetachNow(true);
-	if(TileMap)
-		TileMap->Animate(dTime);
+    grid.DisableChanges(false);
+    
+	if(TileMap) {
+        TileMap->Animate(dTime);
+    }
 
 	// анимация источников света
-	for(int i=0;i<GetNumberLight();i++)
-		if(GetLight(i)&&GetLight(i)->GetAttr(ATTRUNKOBJ_IGNORE)==0) 
-			GetLight(i)->Animate(dTime);
+    UnkLightArray.DisableChanges(true);
+	for (int i=0;i<GetNumberLight();i++) {
+        cUnkLight* light = GetLight(i);
+        if (light && light->GetAttr(ATTRUNKOBJ_IGNORE) == 0) {
+            light->Animate(dTime);
+        }
+    }
+    UnkLightArray.DisableChanges(false);
 	BuildTree();
 	CaclulateLightAmbient();
 
@@ -208,39 +215,36 @@ void cScene::Draw(cCamera *DrawNode)
 			DrawNode->EnableGridTest(TileNumber.x,TileNumber.y,tile_size);
 	}
 
-	{
-		for(i=0;i<grid.size();i++)
-		{
-			cIUnkClass* obj=grid[i];
-			if(obj&&obj->GetAttr(ATTRUNKOBJ_IGNORE)==0) 
-			{
-				obj->PreDraw(DrawNode);
-			}
-		}
-	}
+    grid.DisableChanges(true);
+    for (auto el : grid) {
+#ifdef MTGVECTOR_USE_HANDLES
+        cIUnkClass* obj = safe_cast<cIUnkClass*>(el->Get());
+#else
+        cIUnkClass* obj = el;
+#endif
+        if (obj&&obj->GetAttr(ATTRUNKOBJ_IGNORE)==0) {
+            obj->PreDraw(DrawNode);
+        }
+    }
+    grid.DisableChanges(false);
 
-	{
-		for(i=0;i<GetNumberLight();i++)
-			if(GetLight(i)&&GetLight(i)->GetAttr(ATTRLIGHT_DIRECTION)==0) 
-				GetLight(i)->PreDraw(DrawNode);
-	}
+    UnkLightArray.DisableChanges(true);
+    for (i=0;i<GetNumberLight();i++) {
+        cUnkLight* light = GetLight(i);
+        if (light && light->GetAttr(ATTRLIGHT_DIRECTION) == 0) {
+            light->PreDraw(DrawNode);
+        }
+    }
+    UnkLightArray.DisableChanges(false);
 
-	if(TileMap)
-		TileMap->FixShadowMapCamera(DrawNode);
+	if(TileMap) {
+        TileMap->FixShadowMapCamera(DrawNode);
+    }
 
 	//Draw
 	VISASSERT(DrawNode->GetScene()==this);
 
 	DrawNode->DrawScene();
-
-	for(i=0;i<grid.size();i++)
-	{
-		cIUnkClass* obj=grid[i];
-		if(obj && obj->GetKind(KIND_OBJ_NODE_ROOT)) 
-		{
-			((cObjectNodeRoot*)obj)->OcclusionTest();
-		}
-	}
 
 	gb_RenderDevice->SetClipRect(0,0,gb_RenderDevice->GetSizeX(),gb_RenderDevice->GetSizeY());
 }
@@ -261,7 +265,7 @@ void cScene::GetLighting(const Vect3f &pos,sColor4f &diffuse,sColor4f &specular)
 	{
 		cUnkLight *Light=GetLight(i);
 		float intensity=1;
-		if(Light->GetAttr(ATTRLIGHT_SPHERICAL))
+		if(Light && Light->GetAttr(ATTRLIGHT_SPHERICAL))
 		{
 			float d=pos.distance2(Light->GetPos());
 			float r2=Light->GetRadius()*Light->GetRadius();
@@ -282,7 +286,7 @@ void cScene::GetLighting(Vect3f *LightDirection)
 	for(int i=0;i<GetNumberLight();i++)
 	{
 		cUnkLight *Light=GetLight(i);
-		if(Light->GetAttr(ATTRLIGHT_DIRECTION))
+		if(Light && Light->GetAttr(ATTRLIGHT_DIRECTION))
 		{
 			*LightDirection=Light->GetDirection();
 			break;
@@ -297,7 +301,7 @@ bool cScene::GetLighting(sColor4f &Ambient,sColor4f &Diffuse,sColor4f &Specular,
 	for(int i=0;i<GetNumberLight();i++)
 	{
 		cUnkLight *Light=GetLight(i);
-		if(Light->GetAttr(ATTRLIGHT_DIRECTION))
+		if(Light && Light->GetAttr(ATTRLIGHT_DIRECTION))
 		{
 			LightDirection+=Light->GetDirection();
 			Ambient+=Light->GetDiffuse();
@@ -310,79 +314,150 @@ bool cScene::GetLighting(sColor4f &Ambient,sColor4f &Diffuse,sColor4f &Specular,
 	return found;
 }
 
+#define TRACE_DEBUG 0
 #define PREC_TRACE							10
 #define PREC_TRACE_RAY						18
-bool cScene::Trace(const Vect3f& pStart,const Vect3f& pFinish,Vect3f *pTrace)
+bool cScene::Trace(const Vect3f& pStart,const Vect3f& pFinish,Vect3f *pTrace, bool ignore_height, bool ignore_bounds)
 { // тест на пересечение луча с объектами сцены, в том числе и с ландшафтом
-
-	TerraInterface* terra=TileMap->GetTerra();
+    TerraInterface* terra=TileMap ? TileMap->GetTerra() : nullptr;
+    if (!terra) {
+        xassert(0);
+        return false;
+    }
 
 	float xb=pStart.x,yb=pStart.y,zb=pStart.z;
 	float xe=pFinish.x,ye=pFinish.y,ze=pFinish.z;
 	float dx=xe-xb,dy=ye-yb,dz=ze-zb,dxAbs=ABS(dx),dyAbs=ABS(dy);
 	int dx_,dy_,dz_;
-	if(dxAbs>dyAbs)
-        dy_= xm::round(dy * (1 << PREC_TRACE_RAY) / dxAbs), dz_= xm::round(dz * (1 << PREC_TRACE_RAY) / dxAbs), dx_=((dx >= 0) ? 1 : -1) << PREC_TRACE_RAY;
-	else if(dyAbs>FLT_EPS)
-        dx_= xm::round(dx * (1 << PREC_TRACE_RAY) / dyAbs), dz_= xm::round(dz * (1 << PREC_TRACE_RAY) / dyAbs), dy_=((dy >= 0) ? 1 : -1) << PREC_TRACE_RAY;
-	else
-	{
+
+	if (dxAbs > dyAbs) {
+        dy_= xm::round(dy * (1 << PREC_TRACE_RAY) / dxAbs);
+        dz_= xm::round(dz * (1 << PREC_TRACE_RAY) / dxAbs);
+        dx_=((dx >= 0) ? 1 : -1) << PREC_TRACE_RAY;
+    } else if (dyAbs > FLT_EPS) {
+        dx_= xm::round(dx * (1 << PREC_TRACE_RAY) / dyAbs);
+        dz_= xm::round(dz * (1 << PREC_TRACE_RAY) / dyAbs);
+        dy_=((dy >= 0) ? 1 : -1) << PREC_TRACE_RAY;
+    } else {
 		//VISASSERT(0);
-		if(pTrace) pTrace->set(xb,yb,terra->GetZ(xm::round(xb), xm::round(yb)));
+		if (pTrace) {
+            pTrace->set(xb,yb, ignore_height ? terra->GetHZeroPlast() : terra->GetZ(xm::round(xb), xm::round(yb)));
+        }
 		return true;
 	}
 
 	int x_size=terra->SizeX();
 	int y_size=terra->SizeY();
 
-	if(xb<0) {
-		if(dxAbs) xb=(0-xb)/dxAbs,yb+=xb*dy,zb+=xb*dz,xb=0;
-		else return false;
+#if defined(PERIMETER_DEBUG) && TRACE_DEBUG
+    if (ignore_bounds) {
+        printf("pS %d, %d, %d\n", (int) xb, (int) yb, (int) zb);
     }
-	if(yb<0) {
-		if(dyAbs) yb=(0-yb)/dyAbs,xb+=yb*dx,zb+=yb*dz,yb=0;
-		else return false;
-    }
-	if(xb>=x_size) {
-		if(dxAbs) xb=(xb-(x_size-1))/dxAbs,yb+=xb*dy,zb+=xb*dz,xb=x_size-1;
-		else return false;
-    }
-	if(yb>=y_size) {
-		if(dyAbs) yb=(yb-(y_size-1))/dyAbs,xb+=yb*dx,zb+=yb*dz,yb=y_size-1;
-		else return false;
+#endif
+
+    if (!ignore_bounds) {
+        if (xb < 0) {
+            if (dxAbs) {
+                xb = (0 - xb) / dxAbs, yb += xb * dy, zb += xb * dz, xb = 0;
+            } else {
+                return false;
+            }
+        }
+        if (yb < 0) {
+            if (dyAbs) {
+                yb = (0-yb)/dyAbs,xb+=yb*dx,zb+=yb*dz,yb=0;
+            } else {
+                return false;
+            }
+        }
+        if (xb >= x_size) {
+            if(dxAbs) {
+                xb = (xb - (x_size-1)) / dxAbs;
+                yb += xb*dy;
+                zb += xb*dz;
+                xb = x_size - 1;
+            } else {
+                return false;
+            }
+        }
+        if (yb >= y_size) {
+            if(dyAbs) {
+                yb = (yb - (y_size-1)) / dyAbs;
+                xb += yb*dx;
+                zb += yb*dz;
+                yb = y_size - 1;
+            } else {
+                return false;
+            }
+        }
     }
 
-	int xb_= xm::round(xb * (1 << PREC_TRACE_RAY)),yb_= xm::round(yb * (1 << PREC_TRACE_RAY)),zb_= xm::round(
-            zb * (1 << PREC_TRACE_RAY));
-	for(;(xb_>>PREC_TRACE_RAY)>=0 && (xb_>>PREC_TRACE_RAY)<x_size && 
-		 (yb_>>PREC_TRACE_RAY)>=0 && (yb_>>PREC_TRACE_RAY)<y_size;
-				xb_+=dx_,yb_+=dy_,zb_+=dz_)
-		if(terra->GetZ((xb_>>PREC_TRACE_RAY),(yb_>>PREC_TRACE_RAY))>(zb_>>PREC_TRACE_RAY))
-		{
-			if(pTrace) pTrace->set(xb_>>PREC_TRACE_RAY,yb_>>PREC_TRACE_RAY,terra->GetZ((xb_>>PREC_TRACE_RAY),(yb_>>PREC_TRACE_RAY)));
-			return true;
-		}
+	int xb_= xm::round(xb * (1 << PREC_TRACE_RAY));
+    int yb_= xm::round(yb * (1 << PREC_TRACE_RAY));
+    int zb_= xm::round(zb * (1 << PREC_TRACE_RAY));
+	while (true) {
+        xb_+=dx_;
+        yb_+=dy_;
+        zb_+=dz_;
+        //Check if ray is still inside world
+        int xbp = xb_ >> PREC_TRACE_RAY;
+        int ybp = yb_ >> PREC_TRACE_RAY;
+        int zbp = zb_ >> PREC_TRACE_RAY;
+        bool inside_bounds = xbp>=0 && xbp<x_size &&
+                             ybp>=0 && ybp<y_size;
+        if (!inside_bounds) {
+            if (!ignore_bounds) {
+                break;
+            } else {
+                int max_edge = max(x_size, y_size); 
+                if (xbp<(-max_edge) || xbp>(x_size + max_edge) ||
+                    ybp<(-max_edge) || ybp>(y_size + max_edge)) {
+                    //Even if "ignoring bounds" we don't compute beyond the edge that is as big as the size
+                    //printf("pR EDGE %d, %d, %d\n", xbp, ybp, zbp);
+                    return false;
+                }
+            }
+        }
+        
+        //Get height to check ray collision
+        int z_height = 0;
+        if (ignore_height) {
+            z_height = terra->GetHZeroPlast();
+        } else if (inside_bounds) {
+            z_height = terra->GetZ(xbp, ybp);
+        }
+        
+        //Hit ground
+        if (z_height >= zbp) {
+            if (pTrace) {
+                pTrace->set(xbp, ybp, z_height);
+#if defined(PERIMETER_DEBUG) && TRACE_DEBUG
+                if (ignore_bounds) {
+                    printf("pT  %f, %f, %f\n", pTrace->x, pTrace->y, pTrace->z);
+                }
+#endif
+            }
+            return true;
+        }
+    }
 
 	return false;
 }
 
 void cScene::AttachObj(cIUnkClass *obj)
 {
-	xassert(obj->GetKind()!=KIND_LIGHT);
+    xassert(obj->GetKind()!=KIND_LIGHT);
+    obj->SetScene(this);
 	grid.Attach(obj);
-	obj->SetScene(this);
 }
 void cScene::DetachObj(cIUnkClass *UObj)
 {
-	if(UObj==TileMap)
-		TileMap=NULL;
-	else
-	if(UObj->GetKind()==KIND_LIGHT)
-	{
-		DetachLight((cUnkLight*)UObj);
-	}else
-	{
-		grid.Detach((cIUnkObj*)UObj);
+	if (UObj==TileMap) {
+        TileMap = NULL;
+    } else if (UObj->GetKind()==KIND_LIGHT) {
+		DetachLight(safe_cast<cUnkLight*>(UObj));
+	} else {
+		grid.Detach(safe_cast<cIUnkClass*>(UObj));
 	}
 }
 //////////////////////////////////////////////////////////////////////////////////////////
@@ -390,8 +465,9 @@ cUnkLight* cScene::CreateLight(int Attribute,cTexture *pTexture)
 {
 	cUnkLight *Light=new cUnkLight();
 	Light->SetAttr(Attribute);
-	if(pTexture) 
-		Light->SetTexture(0,pTexture);
+	if(pTexture) {
+        Light->SetTexture(0, pTexture);
+    }
 	AttachLight(Light);
 	Light->SetScene(this);
 	return Light;
@@ -430,32 +506,7 @@ cObjectNodeRoot* cScene::CreateObject(const char *fname,const char *TexturePath)
 	return UObj;
 }
 
-cObject3dx* cScene::CreateObject3dx(const char* fname,const char *TexturePath)
-{
-	cStatic3dx *pStatic=pLibrary3dx->GetElement(fname,TexturePath,false);
-	if(pStatic==0) return 0;
-
-	cObject3dx *pObject=new cObject3dx(pStatic);
-	AttachObj(pObject);
-	return pObject;
-}
-
-cObject3dx* cScene::CreateLogic3dx(const char* fname)
-{
-	cStatic3dx *pStatic=pLibrary3dx->GetElement(fname,NULL,true);
-	if(pStatic==0) return 0;
-	cObject3dx *pObject=new cObject3dx(pStatic);
-	return pObject;
-}
-
 //////////////////////////////////////////////////////////////////////////////////////////
-cIUnkClass* cScene::CreateSprite(const char *TexFName)
-{
-	cSpriteNode *USprite=new cSpriteNode;
-	USprite->SetTexture(0,GetTexLibrary()->GetElement(TexFName));
-	AttachObj(USprite);
-	return USprite;
-}
 
 cSpriteManager* cScene::CreateSpriteManager(const char* TexFName)
 {
@@ -467,32 +518,10 @@ cSpriteManager* cScene::CreateSpriteManager(const char* TexFName)
 
 //////////////////////////////////////////////////////////////////////////////////////////
 
-cIUnkClass* cScene::CreateZPlaneObj(const char* Tex0,const char* Tex1,float k0,float k1,int op,
-									float v0x,float v0y,float v1x,float v1y)
-{
-	cZPlane *PlaneObj=new cZPlane;
-
-	cTexture* pTex0=GetTexLibrary()->GetElement(Tex0);
-	cTexture* pTex1=GetTexLibrary()->GetElement(Tex1);
-	PlaneObj->SetTexture(pTex0,pTex1,k0,k1,op);
-	PlaneObj->SetSpeed(0,v0x,v0y);
-	PlaneObj->SetSpeed(1,v1x,v1y);
-
-	AttachObj(PlaneObj);
-	return PlaneObj; 
-}
-
 cChaos* cScene::CreateChaos(Vect2f size, const char* str_tex0, const char* str_tex1, const char* str_bump, int tile, bool enable_bump)
 {
 	cChaos* p=new cChaos(size,str_tex0,str_tex1,str_bump,tile,enable_bump);
 
-	AttachObj(p);
-	return p;
-}
-
-cIUnkClass* cScene::CreateBox(Vect3f size, const char* str_cube)
-{
-	CBox* p=new CBox(size,str_cube);
 	AttachObj(p);
 	return p;
 }
@@ -508,26 +537,11 @@ cPlane* cScene::CreatePlaneObj()
 {
 	cPlane *PlaneObj=new cPlane;
 	AttachObj(PlaneObj);
+    
 	return PlaneObj;
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////
-cTrail* cScene::CreateTrail(const char* TextureName,float TimeLife)
-{ 
-	cTrail *UObj=new cTrail(TimeLife);
-	UObj->SetTexture(0,GetTexLibrary()->GetElement(TextureName));
-	AttachObj(UObj);
-	return UObj;
-}
-/*
-cParticle* cScene::CreateParticle(const char* TextureName,float TimeLife,Vect2f *vTexSize)
-{ 
-	cParticle *UObj=new cParticle(TimeLife,*vTexSize);
-	UObj->SetTexture(0,GetTexLibrary()->GetElement(TextureName));
-	AttachObj(UObj);
-	return UObj;
-}
-*/
 
 cEffect* cScene::CreateEffect(EffectKey& el,cEmitter3dObject* models,float scale,bool auto_delete_after_life)
 {
@@ -543,13 +557,6 @@ cEffect* cScene::CreateScaledEffect(EffectKey& el,cObjectNodeRoot* models,bool a
 {
 	VISASSERT(models);
 	float scale=models->GetScale().x;
-	return CreateEffect(el,models,scale,auto_delete_after_life);
-}
-
-cEffect* cScene::CreateScaledEffect(EffectKey& el,cObject3dx* models,bool auto_delete_after_life)
-{
-	VISASSERT(models);
-	float scale=models->GetScale();
 	return CreateEffect(el,models,scale,auto_delete_after_life);
 }
 
@@ -574,13 +581,25 @@ cIUnkClass* cScene::CreateElasticSphere(const char* TextureName1, const char* Te
 	return UObj;
 }
 
+cUnkLight* cScene::GetLight(int number) {
+    xassert(0 <= number && number < UnkLightArray.size());
+    auto light = UnkLightArray.get(number);
+#ifdef MTGVECTOR_USE_HANDLES
+    return handle ? safe_cast<cUnkLight*>(handle->Get()) : nullptr;
+#else
+    return safe_cast<cUnkLight*>(light);
+#endif
+}
+
 void cScene::AttachLight(cUnkLight* ULight)
 {
+    xassert(ULight->GetKind()==KIND_LIGHT);
 	UnkLightArray.Attach(ULight);
 }
 
 void cScene::DetachLight(cUnkLight* ULight)
 {
+    xassert(ULight->GetKind()==KIND_LIGHT);
 	UnkLightArray.Detach(ULight);
 }
 
@@ -621,8 +640,7 @@ void cScene::AddReflectionCamera(cCamera *DrawNode)
 
 void cScene::BuildTree()
 {
-	if(TileMap)
-	{
+	if(TileMap) {
 		tree.clear();
 
 		bool is_spherical=false;
@@ -635,14 +653,18 @@ void cScene::BuildTree()
 			}
 		}
 
-		if(is_spherical)
-		{
+		if(is_spherical) {
 			std::vector<cIUnkClass*> nodes;
-			sGrid2d::iterator it;
-			FOR_EACH(grid,it)
-			{
-				if((*it)->GetKind()==KIND_OBJ_NODE_ROOT)
-					nodes.push_back(*it);
+			for (auto el : grid) {
+#ifdef MTGVECTOR_USE_HANDLES
+                cUnknownClass* unk = el->Get();
+#else
+                cUnknownClass* unk = el;
+#endif
+				if (unk && unk->GetKind()==KIND_OBJ_NODE_ROOT) {
+                    cIUnkClass* obj = safe_cast<cIUnkClass*>(unk);
+                    nodes.push_back(obj);
+                }
 			}
 
 			tree.build(0,0,Size.x,Size.y,nodes);
@@ -663,7 +685,7 @@ static void SceneLightProc(cIUnkClass* obj,void* param)
 {
 	SceneLightProcParam& p=*(SceneLightProcParam*)param;
 	VISASSERT(obj->GetKind()==KIND_OBJ_NODE_ROOT);
-	cObjectNodeRoot* node=(cObjectNodeRoot*)obj;
+	cObjectNodeRoot* node = safe_cast<cObjectNodeRoot*>(obj);
 /*
 	float r=(node->GetPosition().trans()-p.pos).norm();
 	if(r<p.radius)
@@ -712,22 +734,58 @@ void cScene::DisableTileMapVisibleTest()
 
 void cScene::DeleteAutoObject()
 {
-	MTG();
-	UpdateLists(INT_MAX);
+    MTG();
+    UpdateLists(INT_MAX);
 
-	for(int i=0;i<grid.size();i++)
-	{
-		cIUnkClass* obj=grid[i];
-		if(obj) 
-		{
-			cEffect* eff=dynamic_cast<cEffect*>(obj);
-			if(eff)
-			if(eff->IsAutoDeleteAfterLife())
-			{
-				if(eff->Release()<=0)
-					i--;
-			}
-		}
-	}
-	UpdateLists(INT_MAX);
+    std::vector<cEffect*> list;
+
+    for (auto el : grid) {
+#ifdef MTGVECTOR_USE_HANDLES
+        cIUnkClass* obj = safe_cast<cIUnkClass*>(el->Get());
+#else
+        cIUnkClass* obj = el;
+#endif
+        if (obj) {
+            cEffect* eff = dynamic_cast<cEffect*>(obj);
+            if (eff && eff->IsAutoDeleteAfterLife()) {
+                list.push_back(eff);
+            }
+        }
+    }
+
+    for (auto eff : list) {
+        eff->Release();
+    }
+
+    UpdateLists(INT_MAX);
 }
+
+
+#ifdef PERIMETER_DEBUG_ASSERT
+void cScene::AssertNoObject(cIUnkClass* object) {
+    if (object->GetKind() == KIND_LIGHT) {
+        UnkLightArray.AssertNoObject(object);
+    } else {
+        grid.AssertNoObject(object);
+    }
+}
+
+void cScene::CheckPendingObjects(std::vector<cIUnkClass*>& allowed) {
+    MTG();
+    UpdateLists(INT_MAX);
+    for (auto e : grid) {
+        if (std::count(allowed.begin(), allowed.end(), e) == 0) {
+            fprintf(stderr, "Pending Object: %p refs %" PRIi64 "\n", e, e->GetRef());
+            xxassert(0, "Pending Object");
+        }
+    }
+    for (auto e : UnkLightArray) {
+        if (std::count(allowed.begin(), allowed.end(), e) == 0) {
+            fprintf(stderr, "Pending Light: %p refs %" PRIi64 "\n", e, e->GetRef());
+            xxassert(0, "Pending Light");
+        }
+    }
+    xxassert(0 == grid.PendingChanges(), "Pending Object changes!");
+    xxassert(0 == UnkLightArray.PendingChanges(), "Pending Light changes!");
+}
+#endif

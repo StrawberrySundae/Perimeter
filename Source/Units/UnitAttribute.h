@@ -45,7 +45,6 @@ DECLARE_ENUM_DESCRIPTOR(WeaponType)
 DECLARE_ENUM_DESCRIPTOR(EnvironmentalDamageType)
 DECLARE_ENUM_DESCRIPTOR(SoundID)
 DECLARE_ENUM_DESCRIPTOR(ChainNodeID)
-DECLARE_ENUM_DESCRIPTOR(ShellControlID)
 DECLARE_ENUM_DESCRIPTOR(ShellControlType)
 DECLARE_ENUM_DESCRIPTOR(Difficulty)
 DECLARE_ENUM_DESCRIPTOR(terBelligerent)
@@ -57,13 +56,13 @@ DECLARE_ENUM_DESCRIPTOR(terEffectID)
 DECLARE_ENUM_DESCRIPTOR(PlacementStrategy)
 DECLARE_ENUM_DESCRIPTOR(ChooseSquadID)
 DECLARE_ENUM_DESCRIPTOR(GAME_CONTENT)
+DECLARE_ENUM_DESCRIPTOR(ShellControlID)
 DECLARE_ENUM_DESCRIPTOR_ENCLOSED(RigidBodyPrm, RigidBodyType)
 #endif
 
 typedef std::vector<Vect2f> Vect2fVect;
 typedef std::vector<Vect2i> Vect2iVect;
 typedef std::vector<Vect3f> Vect3fVect;
-typedef std::vector<Vect3f> Vect3fList;
 
 class AttributeBase;
 class EffectKey;
@@ -1422,7 +1421,7 @@ struct GeometryAttribute: SerializeVirtual
 
 	GeometryAttribute();
 
-	void initGeometryAttribute(const ModelData& modelData, const AttributeBase& attribute);
+	void initGeometryAttribute(const ModelData& modelData, const AttributeBase* attribute);
 
 	VIRTUAL_SERIALIZE(ar) {
 		ar & WRAP_OBJECT(BasementMin);
@@ -1528,9 +1527,11 @@ public:
                                
 	//---------------------------------------
 	const EffectLibrary* EffectLib;
+    
+    bool initialized = false;
 
 	AttributeBase();
-	virtual ~AttributeBase(){}
+	~AttributeBase() override = default;
 	void init();
 
 	EffectKey* getEffect(terEffectID effect_id) const;
@@ -1657,7 +1658,7 @@ public:
 		GeometryAttribute::serialize_template(ar);
 
         if (ar.isInput()) {
-            init();
+            initialized = false;
         }
 	}
 
@@ -1710,13 +1711,15 @@ inline void setKeyC(AttributeIDBelligerent& data, const char* str) {
 	std::string bName(&aName[pos], aName.size() - pos - 2);
 	aName.erase(pos, aName.size());
 	data = AttributeIDBelligerent(
-		getEnumDescriptor(UNIT_ATTRIBUTE_NONE).keyByNameAlt(aName.c_str()),
-		getEnumDescriptor(BELLIGERENT_NONE).keyByNameAlt(bName.c_str()));
+		getEnumDescriptor(UNIT_ATTRIBUTE_NONE)->keyByNameAlt(aName.c_str()),
+		getEnumDescriptor(BELLIGERENT_NONE)->keyByNameAlt(bName.c_str())
+    );
 }
 
 typedef TypeLibrary<AttributeIDBelligerent, AttributeBase> AttributeLibrary;
 extern SingletonPrm<AttributeLibrary> attributeLibrary;
-void initAttributes(XBuffer* scriptsSerialized = nullptr);
+void loadUnitAttributes(bool campaign, XBuffer* scriptsSerialized);
+void initUnitAttributes();
 uint32_t get_content_crc();
 const std::map<std::string, uint32_t>& get_content_list();
 

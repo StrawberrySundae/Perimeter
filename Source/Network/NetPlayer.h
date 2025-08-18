@@ -123,10 +123,11 @@ public:
 	int worldID() const { return worldID_; }
 
 	bool isMultiPlayer() const { return gameType_ == GT_MULTI_PLAYER_CREATE || gameType_ == GT_MULTI_PLAYER_LOAD;	}
+    bool isCampaign() const { return 0 <= missionNumber; }
 
 	int playersAmountScenarioMax() const { return playerAmountScenarioMax; }
 	int playersAmount() const;
-	int playersMaxEasily() const;
+	int playerSlotsAvailable() const;
 
 	void packPlayerIDs();
 
@@ -170,12 +171,21 @@ public:
 
     void fitPlayerArrays();
 
-	PlayerData& getActivePlayerData();
+    const PlayerData* getPlayerData(int playerID) const;
+
+	PlayerData* getActivePlayerData();
 
     void clearData();
 
     SERIALIZE(ar) {
-        ar & WRAP_OBJECT(version);
+        if (ar.isOutput()) {
+            //Always output current version which is serialized with
+            extern const char* currentShortVersion;
+            PrmString versionOutput = currentShortVersion;
+            ar & WRAP_NAME(versionOutput, "version");
+        } else if (ar.isInput()) {
+            ar & WRAP_OBJECT(version);
+        }
         ar & TRANSLATE_NAME(worldName_, "worldName", "Имя мира");
         ar & TRANSLATE_NAME(missionDescriptionID, "missionDescription", "Описание миссии");
         ar & TRANSLATE_OBJECT(difficulty, "Уровень сложности");
@@ -216,6 +226,21 @@ public:
     XBuffer saveData = XBuffer(0, true); //Contains SavePrm content usually present in .spg
     XBuffer binaryData = XBuffer(0, true); //Contains compressed binary data (.bin, previously .gmp and .dat)
     XBuffer scriptsData = XBuffer(0, true); //Contains Scripts attributes
+
+    inline bool operator <(const MissionDescription& rhs) const {
+        if (missionName().empty() || rhs.missionName().empty()) {
+            return savePathContent() < rhs.savePathContent();
+        } else {
+            if (missionName() < rhs.missionName()) {
+                return true;
+            } else if (missionName() == rhs.missionName()) {
+                return savePathContent() < rhs.savePathContent();
+            }
+        }
+        return false;
+    }
+
+    void PrintInfo() const;
 
 private:
     std::string resolve_mission_path(const std::string& path);

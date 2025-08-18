@@ -1,11 +1,14 @@
 #include "StdAfxRD.h"
 #include "Silicon.h"
+#include "DrawBuffer.h"
 #include <xutil.h>
 
 //#include "PrmEdit.h"
 #include "Scripts/Silicon.hi"
 #include "Scripts/Silicon.cppi"
+#include "VertexFormat.h"
 
+RandomGenerator silicon_rnd;
 
 Vect3f ElasticSphere::unit_sphere[psi_size][theta_size];
 Vect3f ElasticSphere::points_map[psi_size][theta_size];
@@ -51,10 +54,10 @@ void ElasticSphere::SetPosition(const MatXf& Matrix)
 	initial_position = Matrix.trans(); 
 
 	Vect3f dir;
-	dir.x = frnd(1);
-	dir.y = frnd(1);
-	dir.z = frnd(1);
-	GlobalMatrix.rot().set(dir, frnd(XM_PI));
+	dir.x = silicon_rnd.frnd(1);
+	dir.y = silicon_rnd.frnd(1);
+	dir.z = silicon_rnd.frnd(1);
+	GlobalMatrix.rot().set(dir, silicon_rnd.frnd(XM_PI));
 }
 
 void ElasticSphere::PreDraw(cCamera *DrawNode)
@@ -67,7 +70,7 @@ void ElasticSphere::PreDraw(cCamera *DrawNode)
 void ElasticSphere::Draw(cCamera *DrawNode)
 {
 	prepare();
-	DrawNode->GetRenderDevice()->Draw(this);
+	DrawNode->GetRenderDevice()->DrawElasticSphere(this);
 }
 void ElasticSphere::Animate(float dt)
 {
@@ -88,11 +91,12 @@ void ElasticSphere::GetColor(sColor4f *ambient,sColor4f *diffuse_,sColor4f *spec
 void ElasticSphere::setRadius(float radius_, float relative_random_displacement)
 {
 	radius = radius_;
-	for(int psi = 0; psi < psi_size; psi++)
-		for(int theta = 0; theta < theta_size; theta++){
-			height_map[psi][theta] = radius*(1 + frnd(relative_random_displacement));
-			velocity_map[psi][theta] = 0;
-			}
+	for(int psi = 0; psi < psi_size; psi++) {
+        for (int theta = 0; theta < theta_size; theta++) {
+            height_map[psi][theta] = radius * (1 + silicon_rnd.frnd(relative_random_displacement));
+            velocity_map[psi][theta] = 0;
+        }
+    }
 	velocity.set(0, 0, 0);
 }
 
@@ -149,20 +153,24 @@ void ElasticSphere::evolve()
 
 void ElasticSphere::prepare()
 {
-	int psi;
-	for(psi = 0; psi < psi_size; psi++)
-		for(int theta = 0; theta < theta_size; theta++)
-			points_map[psi][theta].scale(unit_sphere[psi][theta], height_map[psi][theta]);
+	for(int psi = 0; psi < psi_size; psi++) {
+        for (int theta = 0; theta < theta_size; theta++) {
+            points_map[psi][theta].scale(unit_sphere[psi][theta], height_map[psi][theta]);
+        }
+    }
 
-	for(psi = 0; psi < psi_size; psi++)
-		for(int theta = 0; theta < theta_size; theta++){
-			normals_map[psi][theta].cross(point(psi - 1, theta) - point(psi + 1, theta), point(psi, theta + 1) - point(psi, theta - 1));
-			normals_map[psi][theta].Normalize();
-			}
-	for(psi = 0; psi < psi_size; psi++){
-		normals_map[psi][0] = Vect3f::K;
-		normals_map[psi][theta_size - 1] = Vect3f::K_;
-		}
+	for(int psi = 0; psi < psi_size; psi++) {
+        for (int theta = 0; theta < theta_size; theta++) {
+            normals_map[psi][theta].cross(point(psi - 1, theta) - point(psi + 1, theta),
+                                          point(psi, theta + 1) - point(psi, theta - 1));
+            normals_map[psi][theta].Normalize();
+        }
+    }
+    
+	for (auto& psi : normals_map) {
+		psi[0] = Vect3f::K;
+		psi[theta_size - 1] = Vect3f::K_;
+    }
 }
 
 void ElasticSphere::getAngles(const Vect3f& point, int& psi, int& theta)
@@ -220,7 +228,7 @@ ElasticLink::~ElasticLink()
 	if(Texture) { Texture->Release(); Texture=0; }
 	if(Texture2) { Texture2->Release(); Texture2=0; }
 	if(Frame) { delete Frame; Frame=0; }
-	delete x_height;
+	delete[] x_height;
 }
 
 void ElasticLink::evolve()
@@ -320,26 +328,21 @@ void ElasticLink::Draw(cCamera *DrawNode)
 		return;
 	float dz = length/line_size;
 
-	int nVertex=0;
-
-	DrawStripT2 strip;
-
-	uint32_t old_cull;
-	old_cull=gb_RenderDevice3D->GetRenderState(D3DRS_CULLMODE);
-	gb_RenderDevice3D->SetRenderState(D3DRS_CULLMODE, D3DCULL_NONE);
+	uint32_t old_cull=gb_RenderDevice->GetRenderState(RS_CULLMODE);
+	gb_RenderDevice->SetRenderState(RS_CULLMODE, CULL_NONE);
 	gb_RenderDevice->SetNoMaterial(blendMode,GetFrame()->GetPhase(),GetTexture(),GetTexture2(),COLOR_MOD);
-	
-	strip.Begin(MatXf(Mat3f::ID,point1));
 
-	sColor4c Diffuse(diffuse);
+    gb_RenderDevice->SetWorldMatXf(MatXf(Mat3f::ID,point1));
+
+	uint32_t Diffuse = gb_RenderDevice->ConvertColor(sColor4c(diffuse));
 	Vect3f Weight = 10*x_axis;
 	float u1=0.f, du1=0.01f;
 	float u2=2*GetFrame()->GetPhase(), du2=0.02f;
 	float v2=0, dv2=0.01f;
 
-	sVertexXYZDT2 vtx0,vtx1;
-	for(int i = 0; i < line_size; i++)
-	{
+    DrawBuffer* db = gb_RenderDevice->GetDrawBuffer(sVertexXYZDT2::fmt, PT_TRIANGLESTRIP, (line_size + 1) * 2);
+    sVertexXYZDT2* vb = db->LockTriangleStripSteps<sVertexXYZDT2>(line_size);
+	for(int i = 0; i < line_size; i++) {
 		float z = dz*i;
 		float x = thickness_factor*x_height[i];
 		if(z < oscillating_link_tail_length)
@@ -347,19 +350,20 @@ void ElasticLink::Draw(cCamera *DrawNode)
 		if(length - z < oscillating_link_tail_length)
 			x *= (length - z)/oscillating_link_tail_length;
 		Vect3f v = x*x_axis + z*z_axis;
-		vtx0.pos = v-Weight;
-		vtx1.pos = v+Weight;
+        sVertexXYZDT2& vtx0 = vb[i*2];
+        sVertexXYZDT2& vtx1 = vb[i*2+1];
+		vtx0.setPos(v-Weight);
+		vtx1.setPos(v+Weight);
 		vtx0.diffuse=vtx1.diffuse=Diffuse;
 		vtx0.u1()=   vtx1.u1()=(u1+=du1);
 		vtx0.v1()=0; vtx1.v1()=1;
 		vtx0.u2()=   vtx1.u2()=(u2+=du2);
 		vtx0.v2()=(v2+=dv2);vtx1.v2()=v2+1;
-		nVertex+=2;
-		strip.Set(vtx0,vtx1);
 	}
+    db->Unlock();
+    db->EndTriangleStrip();
 
-	strip.End();
-	gb_RenderDevice3D->SetRenderState(D3DRS_CULLMODE, old_cull);
+	gb_RenderDevice->SetRenderState(RS_CULLMODE, old_cull);
 }
 
 

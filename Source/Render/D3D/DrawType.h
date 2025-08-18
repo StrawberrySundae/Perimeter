@@ -30,7 +30,7 @@ public:
 	virtual bool CreateShadowTexture(int xysize)=0;
 	virtual void DeleteShadowTexture();
 	virtual cTexture* GetShadowMap()							{return pShadowMap;}
-	virtual LPDIRECT3DSURFACE9 GetZBuffer()						{return pZBuffer;}
+	virtual IDirect3DSurface9* GetZBuffer()						{return pZBuffer;}
 	virtual cTexture* GetLightMap()								{return pLightMap;}
 	
 
@@ -38,7 +38,6 @@ public:
 	virtual void SetMaterialTilemapShadow()=0;
 
 	virtual IDirect3DTexture9* GetTZBuffer(){return NULL;}
-	virtual IDirect3DTexture9* GetTilemapShadow0(){return NULL;}
 
 	virtual void SetTileColor(sColor4f color)=0;//r,g,b=[0..2], a=ignored etc
 
@@ -46,10 +45,10 @@ public:
 	virtual int GetOffsetTextureNumber(bool tilemap=false){return 0;}
 
 	virtual void SetFog(const sColor4f &color,const Vect2f &v){}
-	virtual D3DXVECTOR4 GetFogParam(){return D3DXVECTOR4(0,1,0,0);}
+	virtual Vect4f GetFogParam(){return Vect4f(0,1,0,0);}
 protected:
 	cTexture*		pShadowMap;
-	LPDIRECT3DSURFACE9	pZBuffer;
+	IDirect3DSurface9*	pZBuffer;
 	cTexture*		pLightMap;
 
 	void SetStream(cObjMesh *Mesh);
@@ -197,7 +196,6 @@ public:
 	virtual bool CreateShadowTexture(int xysize);
 	virtual void SetMaterialTilemap(cTileMap *TileMap);
 	virtual void SetMaterialTilemapShadow();
-	virtual IDirect3DTexture9* GetTilemapShadow0(){return pLookupMap->GetDDSurface(0);}
 	virtual void SetTileColor(sColor4f color);
 protected:
 	void SetMaterial(float Phase,cTexture *Texture0,cTexture *Texture1,sDataRenderMaterial *Data);
@@ -233,7 +231,7 @@ class DrawTypeGeforce3:public DrawTypeFixedPipeline
 	VSScene*     last_vs;
 	PixelShader* last_ps;
 
-	D3DXVECTOR4 fog_param;
+	Vect4f fog_param;
 public:
 	DrawTypeGeforce3();
 	~DrawTypeGeforce3();
@@ -256,7 +254,7 @@ public:
 	virtual void SetTileColor(sColor4f color);
 	virtual int GetOffsetTextureNumber(bool tilemap=false);
 	virtual void SetFog(const sColor4f &color,const Vect2f &v);
-	virtual D3DXVECTOR4 GetFogParam(){return fog_param;}
+	virtual Vect4f GetFogParam(){return fog_param;}
 protected:
 	void SetMaterial(float Phase,cTexture *Texture0,cTexture *Texture1,sDataRenderMaterial *Data);
 };
@@ -284,7 +282,7 @@ public:
 	virtual void SetTileColor(sColor4f color);
 
 	virtual cTexture* GetShadowMap();
-	virtual LPDIRECT3DSURFACE9 GetZBuffer();
+	virtual IDirect3DSurface9* GetZBuffer();
 	virtual cTexture* GetLightMap();
 };
 
@@ -318,7 +316,7 @@ class DrawTypeGeforceFX:public DrawTypeFixedPipeline
 	VSScene*     last_vs;
 	PixelShader* last_ps;
 
-	D3DXVECTOR4 fog_param;
+	Vect4f fog_param;
 public:
 	DrawTypeGeforceFX();
 	~DrawTypeGeforceFX();
@@ -341,7 +339,7 @@ public:
 	virtual void SetTileColor(sColor4f color);
 	virtual int GetOffsetTextureNumber(bool tilemap=false);
 	virtual void SetFog(const sColor4f &color,const Vect2f &v);
-	virtual D3DXVECTOR4 GetFogParam(){return fog_param;}
+	virtual Vect4f GetFogParam(){return fog_param;}
 protected:
 	void SetMaterial(float Phase,cTexture *Texture0,cTexture *Texture1,sDataRenderMaterial *Data);
 };

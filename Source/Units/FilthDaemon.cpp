@@ -125,6 +125,8 @@ terUnitAttributeID terFilthSwarmDaemon::GetUnitID()
 {
 	switch(SpotPoint->GetFilthParamID())
 	{
+    default:
+        break;
 	case FILTH_SPOT_ID_DAEMON:
 		return UNIT_ATTRIBUTE_FILTH_DAEMON;
 	case FILTH_SPOT_ID_A_DAEMON:
@@ -372,7 +374,7 @@ void terFilthDaemon::Collision(terUnitBase* p)
 {
 	if(isEnemy(p) && berserk_mode && !free_destroy && IsAttackable(p))
 	{
-		p->setDamage(attr().unitDamage.mainDamage,this);
+		p->setDamage(attr()->unitDamage.mainDamage,this);
 	}
 }
 
@@ -425,7 +427,7 @@ void terFilthDaemon::AvatarInterpolation()
 	{
 		Vect3f pos=To3D(position());
 		float dz=position().z-pos.z;
-		if(dz<=-attr().boundRadius)
+		if(dz<=-attr()->boundRadius)
 			obj_alpha=0;
 	}
 

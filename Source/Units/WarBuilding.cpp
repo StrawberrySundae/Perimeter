@@ -35,17 +35,16 @@ terBuildingMilitary::terBuildingMilitary(const UnitTemplate& data) : terBuilding
 void terBuildingMilitary::ShowCircles()
 {
 	terUnitBase::ShowCircles();
-	if(attr().ShowCircles){
-		if(attr().fireRadius())
-			terCircleShow(position(),position(),attr().fireRadius(), circleColors.fireRadius);
-		if(attr().fireRadiusMin())
-			terCircleShow(position(),position(),attr().fireRadiusMin(), circleColors.fireRadiusMin);
+	if(attr()->ShowCircles){
+		if(attr()->fireRadius())
+			terCircleShow(position(),position(),attr()->fireRadius(), circleColors.fireRadius);
+		if(attr()->fireRadiusMin())
+			terCircleShow(position(),position(),attr()->fireRadiusMin(), circleColors.fireRadiusMin);
 	}
 
-	if (
-			attr().ID == UNIT_ATTRIBUTE_GUN_SCUM_DISRUPTOR
-		||	attr().ID == UNIT_ATTRIBUTE_GUN_BALLISTIC
-		||	attr().ID == UNIT_ATTRIBUTE_GUN_FILTH_NAVIGATOR ) {
+	if (attr()->ID == UNIT_ATTRIBUTE_GUN_SCUM_DISRUPTOR
+    ||	attr()->ID == UNIT_ATTRIBUTE_GUN_BALLISTIC
+    ||	attr()->ID == UNIT_ATTRIBUTE_GUN_FILTH_NAVIGATOR ) {
 
 		Vect3f target;
 		bool hasTarget = false;
@@ -101,7 +100,8 @@ void terBuildingMilitary::Quant()
 
 	if(attackTarget_ && !targetEventTimer_){
 		targetEventTimer_.start(targetEventTime + terLogicRND(targetEventTime));
-		universe()->checkEvent(EventUnitMyUnitEnemy(Event::AIM_AT_OBJECT, attackTarget_, this));
+        EventUnitMyUnitEnemy ev(Event::AIM_AT_OBJECT, attackTarget_, this);
+		universe()->checkEvent(&ev);
 	}
 }
 
@@ -111,16 +111,23 @@ void terBuildingMilitary::executeCommand(const UnitCommand& command)
 
 	switch(command.commandID()){
 	case COMMAND_ID_POINT:
-		setAttackTarget(NULL,true);
+        setAttackTarget(nullptr, true);
 		xassert(!wayPoints().empty());
 		break;
-	case COMMAND_ID_OBJECT:
-		if(!command.unit() || command.unit()->Player->clan() != Player->clan())
-			setAttackTarget(safe_cast<terUnitReal*>(command.unit()),true);
+	case COMMAND_ID_OBJECT: {
+        terUnitReal* pUnit = dynamic_cast<terUnitReal*>(command.unit());
+        if (pUnit && isEnemy(pUnit) && pUnit->unitClass() & attr()->AttackClass) {
+            setAttackTarget(pUnit, true);
+        } else {
+            setAttackTarget(nullptr, true);
+        }
+        break;
+    }
+	case COMMAND_ID_STOP:
+        setAttackTarget(nullptr, true);
 		break;
-	case COMMAND_ID_STOP: 
-		setAttackTarget(NULL,true);
-		break;
+    default:
+        break;
 	}
 }
 
@@ -169,7 +176,7 @@ void terBuildingMilitary::MoveQuant()
 bool terBuildingMilitary::findTarget()
 {
 	terUnitGridTeamOffensiveOperator op(this);
-	universe()->UnitGrid.Scan(xm::round(position().x), xm::round(position().y), xm::round(attr().sightRadius()), op);
+	universe()->UnitGrid.Scan(xm::round(position().x), xm::round(position().y), xm::round(attr()->sightRadius()), op);
 
 	targetsScanTimer_.start(static_gun_targets_scan_period);
 
@@ -236,7 +243,7 @@ SaveUnitData* terBuildingMilitary::universalSave(SaveUnitData* baseData)
 	data->lastAttackTarget = lastAttackTarget_;
 	data->manualAttackTarget = manualAttackTarget_;
 
-	if(attr().ID == UNIT_ATTRIBUTE_GUN_BALLISTIC && weapon_ && weapon_->missileCount())
+	if(attr()->ID == UNIT_ATTRIBUTE_GUN_BALLISTIC && weapon_ && weapon_->missileCount())
 		data->weaponChargeLevel = 1;
 
 	return data;

@@ -111,8 +111,8 @@ struct MiniMapEvent {
 	}
 	MiniMapEventCode code;
 	Vect2f pos;
-	int btnID;
-	int tabNumber;
+	int btnID = 0;
+	int tabNumber = 0;
 };
 
 struct LogicData {
@@ -142,7 +142,7 @@ struct LogicData {
 
 	~LogicData() {
 		if (miniMap) {
-			delete miniMap;
+			delete[] miniMap;
 		}
 	}
 
@@ -209,7 +209,7 @@ struct LogicData {
 
 	void createMiniMap(int width, int height) {
 		if (miniMap) {
-			delete miniMap;
+			delete[] miniMap;
 		}
 		miniMap = new sColor4c[ width * height ];
 		sx = width;
@@ -217,7 +217,7 @@ struct LogicData {
 		clearMiniMap();
 	}
 	void clearMiniMap() {
-		memset(miniMap, 0, sizeof(int) * sx * sy);
+		memset(miniMap, 0, sizeof(sColor4c) * sx * sy);
 	}
 	sColor4c* getMiniMap() {
 		return miniMap;

@@ -20,7 +20,8 @@
 
 extern char _bMenuMode;
 
-int _nActiveClusterNum = -1;
+//Avoid cross-edge terraforming by keeping distance
+const int TOOLZER_EXTRA_MARGIN = 20;
 
 bool bNoUnitAction = false;
 bool bNoTracking = false;
@@ -42,7 +43,7 @@ void CheckBuildTerrainUnit(terUnitAttributeID nAttrID)
 	for(int k=0;k<5;k++)
 	{
 		terUnitBase* p = slots[k].unit;
-		if(p && p->attr().ID==nAttrID)
+		if(p && p->attr()->ID==nAttrID)
 		{
 			count_unit++;
 		}
@@ -84,14 +85,15 @@ void OnButtonWorkArea(CShellWindow* pWnd, InterfaceEventCode code, int param)
 {
 	if(code == EVENT_PRESSED)
 	{
-		if(gameShell->BuildingInstaller.inited())
-			gameShell->BuildingInstaller.CancelObject();
+		if (gameShell->BuildingInstallerInited()) {
+            gameShell->BuildingInstaller->CancelObject();
+        }
 
 		CheckBuildTerrainUnit(UNIT_ATTRIBUTE_TERRAIN_MASTER);
 
 		_pShellDispatcher->m_bCanFlip = pWnd->ID != SQSH_WORKAREA4_ID;
 
-		int rg_wanted;
+		int rg_wanted = 0;
 		switch(pWnd->ID)
 		{
 		case SQSH_WORKAREA2_ID:
@@ -139,8 +141,8 @@ void OnButtonWorkArea(CShellWindow* pWnd, InterfaceEventCode code, int param)
 
 			if(rg_wanted == editRegion1)
 			{
-				int r = _pShellDispatcher->regionMetaDispatcher()->getToolzerRadius()*2;
-				_shellCursorManager.SetSize(r);
+                float sx = _pShellDispatcher->regionMetaDispatcher()->getToolzerRadius() * 2.0f;
+				_shellCursorManager.SetSize(sx);
 			}
 
 			((CShellComplexPushButton*)pWnd)->SetCheck(true);
@@ -173,7 +175,7 @@ int OnLBDownWorkarea(float x,float y)
 			if(terCamera->cursorTrace(Vect2f(x - 0.5f, y - 0.5f), v))
 			{
 				MetaRegionLock lock(_pShellDispatcher->regionMetaDispatcher());
-				float radius = 2*_pShellDispatcher->regionMetaDispatcher()->getToolzerRadius();
+				float radius = _pShellDispatcher->regionMetaDispatcher()->getToolzerRadius() + TOOLZER_EXTRA_MARGIN;
 				v.x = clamp(v.x, radius, vMap.H_SIZE - radius - 1);
 				v.y = clamp(v.y, radius, vMap.V_SIZE - radius - 1);
 
@@ -234,26 +236,24 @@ int OnMouseMoveRegionEdit(float x, float y)
 		if((_shellIconManager.m_nMouseButtonsState & MK_LBUTTON) && !bWasShiftUnpressed)
 		{
 			Vect3f v;
-			if(terCamera->cursorTrace(Vect2f(x - 0.5f, y - 0.5f), v))
-			{
+			if (terCameraType::cursorTrace(terCamera->GetCamera(), Vect2f(x - 0.5f, y - 0.5f), &v, false, true)) {
 				MetaRegionLock lock(_pShellDispatcher->regionMetaDispatcher());
-				float radius = 2*_pShellDispatcher->regionMetaDispatcher()->getToolzerRadius();
+				float radius = _pShellDispatcher->regionMetaDispatcher()->getToolzerRadius() + TOOLZER_EXTRA_MARGIN;
 				v.x = clamp(v.x, radius, vMap.H_SIZE - radius - 1);
 				v.y = clamp(v.y, radius, vMap.V_SIZE - radius - 1);
 
 				_pShellDispatcher->regionMetaDispatcher()->setOperation(_shellIconManager.getCurrentEnabledOperation());
 				_pShellDispatcher->regionMetaDispatcher()->activeLayer()->moveToolzer(Vect2f(v));
 				_pShellDispatcher->regionMetaDispatcher()->operate();
-			}
+            }
 		}
 	} else {
 		if( (_shellIconManager.m_nMouseButtonsState & MK_LBUTTON) )
 		{
 			Vect3f v;
-			if(terCamera->cursorTrace(Vect2f(x - 0.5f, y - 0.5f), v))
-			{
+            if (terCameraType::cursorTrace(terCamera->GetCamera(), Vect2f(x - 0.5f, y - 0.5f), &v, false, true)) {
 				MetaRegionLock lock(_pShellDispatcher->regionMetaDispatcher());
-				float radius = 2*_pShellDispatcher->regionMetaDispatcher()->getToolzerRadius();
+				float radius = _pShellDispatcher->regionMetaDispatcher()->getToolzerRadius() + TOOLZER_EXTRA_MARGIN;
 				v.x = clamp(v.x, radius, vMap.H_SIZE - radius - 1);
 				v.y = clamp(v.y, radius, vMap.V_SIZE - radius - 1);
 
@@ -277,10 +277,9 @@ int OnMouseMoveRegionEdit2(float x, float y)
 	if(!_pShellDispatcher->m_bTolzerFirstClick)
 	{
 		Vect3f v;
-		if(terCamera->cursorTrace(Vect2f(x - 0.5f, y - 0.5f), v))
-		{
+        if (terCameraType::cursorTrace(terCamera->GetCamera(), Vect2f(x - 0.5f, y - 0.5f), &v, false, true)) {
 			MetaRegionLock lock(_pShellDispatcher->regionMetaDispatcher());
-			float radius = 2*_pShellDispatcher->regionMetaDispatcher()->getToolzerRadius();
+			float radius = _pShellDispatcher->regionMetaDispatcher()->getToolzerRadius() + TOOLZER_EXTRA_MARGIN;
 			v.x = clamp(v.x, radius, vMap.H_SIZE - radius - 1);
 			v.y = clamp(v.y, radius, vMap.V_SIZE - radius - 1);
 
@@ -298,9 +297,8 @@ void OnToolzerSizeChange(float y)
 	RegionMetaDispatcher* disp=_pShellDispatcher->regionMetaDispatcher();
 	MetaRegionLock lock(disp);
 	disp->changeToolzerRadius(s*DeltaToolzerRadius);
-	int r = disp->getToolzerRadius()*2;
-
-	_shellCursorManager.SetSize(r);
+	float sx = disp->getToolzerRadius() * 2.0f;
+	_shellCursorManager.SetSize(sx);
 }
 
 void ToolzerSizeChangeQuant()
@@ -331,7 +329,7 @@ void CShellLogicDispatcher::OnOverUnit(terUnitBase* p)
 		OnOverFriend(p);
 	else
 	{
-		switch(p->attr().ID)
+		switch(p->attr()->ID)
 		{
 		case UNIT_ATTRIBUTE_FRAME:
 			OnOverFrame();
@@ -372,7 +370,7 @@ void CShellLogicDispatcher::OnOverFriend(terUnitBase* p)
 				_shellCursorManager.SetActiveCursor(CShellCursorManager::arrow);
 			}
 //			_shellCursorManager.SetActiveCursor(CShellCursorManager::select);
-			_shellIconManager.DelDynamicHandler(0, CBCODE_LBDOWN);
+			_shellIconManager.DelDynamicHandler(nullptr, CBCODE_LBDOWN);
 		}
 }
 
@@ -422,7 +420,7 @@ void CShellLogicDispatcher::OnMouseIdle()
 	if(!_shellCursorManager.m_bCursorPermanent)
 	{
 		_shellCursorManager.SetActiveCursor(CShellCursorManager::arrow);
-		_shellIconManager.DelDynamicHandler(0, CBCODE_LBDOWN);
+		_shellIconManager.DelDynamicHandler(nullptr, CBCODE_LBDOWN);
 	}
 }
 
@@ -1128,8 +1126,10 @@ void OnButtonStructure(CShellWindow* pWnd, InterfaceEventCode code, int param)
 
 			CheckBuildTerrainUnit(UNIT_ATTRIBUTE_BUILD_MASTER);
 
-			gameShell->BuildingInstaller.InitObject(universe()->activePlayer()->unitAttribute(n_struct));
-			gameShell->BuildingInstaller.SetBuildPosition(gameShell->mousePosition(), universe()->activePlayer());
+            if (gameShell->BuildingInstaller) {
+                gameShell->BuildingInstaller->InitObject(universe()->activePlayer()->unitAttribute(n_struct));
+                gameShell->BuildingInstaller->SetBuildPosition(gameShell->mousePosition(), universe()->activePlayer());
+            }
 		}
 	} else if (code == EVENT_PRESSED_DISABLED) {
 		CShellComplexPushButton* pBtn = (CShellComplexPushButton*)pWnd;
@@ -1238,7 +1238,7 @@ void OnButtonTogether(CShellWindow* pWnd, InterfaceEventCode code, int param) {
 		UnitList::const_iterator selIt;
 		for (selIt = selList.begin(); selIt != selList.end(); selIt++) {
 			if ((*selIt) != pSquadSelected && !((terUnitSquad*)(*selIt))->Empty() && ((terUnitSquad*)(*selIt))->isBase()) {
-				pSquadSelected->commandOutcoming(UnitCommand(COMMAND_ID_ADD_SQUAD, *selIt, COMMAND_SELECTED_MODE_SINGLE));
+				pSquadSelected->commandOutcoming(UnitCommand(COMMAND_ID_ADD_SQUAD, *selIt, COMMAND_SELECTED_MODE_NONE));
 			}
 		}
 	}
@@ -1337,7 +1337,7 @@ void OnMapWindowClicked(CShellWindow* pWnd, InterfaceEventCode code, int param)
 		y *= vMap.V_SIZE / pWnd->sy;
 
 		if(x > 0 && y > 0 && x < vMap.H_SIZE && y < vMap.V_SIZE)
-			terCamera->setCoordinate(CameraCoordinate(Vect2f(x, y), terCamera->coordinate().psi(), terCamera->coordinate().theta(), terCamera->coordinate().distance()));
+			terCamera->setPosition(Vect2f(x, y));
 	}
 	if (code == EVENT_RPRESSED) {
 		if (!universe()) {
@@ -1356,15 +1356,16 @@ void OnMapWindowClicked(CShellWindow* pWnd, InterfaceEventCode code, int param)
 
 		if (x > 0 && y > 0 && x < vMap.H_SIZE && y < vMap.V_SIZE && gameShell->m_ShellDispatcher.GetSelectedUnit() && !gameShell->m_ShellDispatcher.GetSelectedUnit()->isBuilding()) {
 			Vect3f v(x, y, 0);
-			universe()->makeCommandSubtle(COMMAND_ID_POINT, v, COMMAND_SELECTED_MODE_SINGLE);
+			universe()->makeCommandSubtle(COMMAND_ID_POINT, v, isControlPressed() ? COMMAND_SELECTED_MODE_OVERRIDE : COMMAND_SELECTED_MODE_NONE);
 		}
 	}
 }
 
 void OnButtonGotoBase(CShellWindow* pWnd, InterfaceEventCode code, int param)
 {
-	if(code == EVENT_PRESSED)
-		universe()->makeCommand(COMMAND_ID_RETURN_TO_BASE, 0, COMMAND_SELECTED_MODE_SINGLE);
+	if(code == EVENT_PRESSED) {
+        universe()->makeCommand(COMMAND_ID_RETURN_TO_BASE, 0, isControlPressed() ? COMMAND_SELECTED_MODE_OVERRIDE : COMMAND_SELECTED_MODE_NONE);
+    }
 }
 
 static CShellWindow* _pBtnLastRequest = 0;
@@ -1418,7 +1419,7 @@ void OnButtonTerrainBuild(CShellWindow* pWnd, InterfaceEventCode code, int param
 //			HT-SELECT!!!
 			if (mt_interface_quant) {
 				TerrainButtonData* slotData = &(gameShell->getLogicUpdater().getLogicData()->slots[nSlot]);
-				universe()->select.unitToSelection(slotData->unit, isShiftPressed() ? COMMAND_SELECTED_MODE_NEGATIVE : COMMAND_SELECTED_MODE_SINGLE);
+				universe()->select.unitToSelection(slotData->unit, isShiftPressed() ? COMMAND_SELECTED_MODE_NEGATIVE : COMMAND_SELECTED_MODE_NONE);
 			}
 		}
 	}
@@ -1429,7 +1430,7 @@ void OnButtonTerrainBuild(CShellWindow* pWnd, InterfaceEventCode code, int param
 		if (mt_interface_quant) {
 			TerrainButtonData* slotData = &(gameShell->getLogicUpdater().getLogicData()->slots[nSlot]);
 			if(slotData->unit)
-				terCamera->setCoordinate(CameraCoordinate(slotData->unit->position2D(), terCamera->coordinate().psi(), terCamera->coordinate().theta(), terCamera->coordinate().distance()));
+				terCamera->setPosition(slotData->unit->position2D());
 		}
 	}
 }
@@ -1468,7 +1469,7 @@ void OnSquadTabEvent(CShellWindow* pWnd, InterfaceEventCode code, int param)
 		SquadPageData& squad_data=logicData->squads[param];
 		
 		if (squad_data.enabled) {
-			universe()->select.unitToSelection(pSquad, isShiftPressed() ? COMMAND_SELECTED_MODE_NEGATIVE : COMMAND_SELECTED_MODE_SINGLE, true);
+			universe()->select.unitToSelection(pSquad, isShiftPressed() ? COMMAND_SELECTED_MODE_NEGATIVE : COMMAND_SELECTED_MODE_NONE, true);
 //			universe()->DeselectAll();
 	
 //			universe()->SelectSquad(pSquad);
@@ -1478,19 +1479,19 @@ void OnSquadTabEvent(CShellWindow* pWnd, InterfaceEventCode code, int param)
 	else if(code == EVENT_DOUBLECLICK)
 	{
 		if(!pSquad->Empty())
-			terCamera->setCoordinate(CameraCoordinate(pSquad->position2D(), terCamera->coordinate().psi(), terCamera->coordinate().theta(), terCamera->coordinate().distance()));
+			terCamera->setPosition(pSquad->position2D());
 	}
 	else if(code == EVENT_RPRESSED)
 	{
 		CSELECT_AUTOLOCK();
 		const UnitList& selList=universe()->select.GetSelectList();
-		if (selList.empty() || !(selList.front()->attr().ID == UNIT_ATTRIBUTE_SQUAD)) {
+		if (selList.empty() || !(selList.front()->attr()->ID == UNIT_ATTRIBUTE_SQUAD)) {
 			return;
 		}
 		UnitList::const_iterator selIt;
 		for (selIt = selList.begin(); selIt != selList.end(); selIt++) {
 			if ((*selIt) != pSquad) {
-				(*selIt)->commandOutcoming(UnitCommand(COMMAND_ID_FOLLOW_SQUAD, pSquad, 0, COMMAND_SELECTED_MODE_SINGLE));
+				(*selIt)->commandOutcoming(UnitCommand(COMMAND_ID_FOLLOW_SQUAD, pSquad, 0, COMMAND_SELECTED_MODE_NONE));
 			}
 		}
 	}
@@ -1502,7 +1503,7 @@ void OnFrameTabEvent(CShellWindow* pWnd, InterfaceEventCode code, int param)
 	{
 		terUnitBase* pFrame = universe()->activePlayer()->frame();
 		if(pFrame)
-			terCamera->setCoordinate(CameraCoordinate(pFrame->position2D(), terCamera->coordinate().psi(), terCamera->coordinate().theta(), terCamera->coordinate().distance()));
+			terCamera->setPosition(pFrame->position2D());
 	}
 }
 
@@ -1543,22 +1544,24 @@ void OnButtonAttack(CShellWindow* pWnd, InterfaceEventCode code, int param)
 		_pShellDispatcher->m_nPickAction = SHELL_PICK_UNIT_ATTACK;
 		_pShellDispatcher->m_nPickData = 0;
 
+        /*
 		terUnitBase* pUnit = _pShellDispatcher->GetSelectedUnit();
 		if (pUnit) {
-			const AttributeBase* attr = 0;
-			if (pUnit->attr().ID == UNIT_ATTRIBUTE_SQUAD) {
+			const AttributeBase* attr = nullptr;
+			if (pUnit->attr()->ID == UNIT_ATTRIBUTE_SQUAD) {
 				terUnitAttributeID id = safe_cast<terUnitSquad*>(pUnit)->currentMutation();
 				if (id != UNIT_ATTRIBUTE_NONE) {
 					attr = pUnit->Player->unitAttribute(id);
 				}
 			} else {
-				attr = &(pUnit->attr());
+				attr = pUnit->attr();
 			}
 
 //			if (attr && (attr->AttackClass & UNIT_CLASS_GROUND)) {
 //				_pShellDispatcher->m_nPickData = 1;
 //			}
 		}
+        */
 
 		_shellCursorManager.SetActiveCursor(CShellCursorManager::attack, 1);
 	}
@@ -1580,9 +1583,10 @@ void OnButtonFrameInstall(CShellWindow* pWnd, InterfaceEventCode code, int param
 					CInfoWindow* pWndInfo = (CInfoWindow*)_shellIconManager.GetWnd(SQSH_INFOWND_ID);
 					xassert(pWndInfo);
 			
-					static char _cb[200];
+					static std::string _cb;
 					pWndInfo->Show(true);
-					pWndInfo->SetText(_shellIconManager.FormatMessageText("<frame_cant_install>", _cb)); 
+                    _shellIconManager.FormatMessageText("<frame_cant_install>", &_cb);
+					pWndInfo->SetText(_cb.c_str()); 
 					pWndInfo->SetTime(3000);
 					pWndInfo->Centered();
 				}
@@ -1629,7 +1633,7 @@ void OnButtonBackToFrame(CShellWindow* pWnd, InterfaceEventCode code, int param)
 
 		if(pUnit){
 			pUnit->soundEvent(SOUND_VOICE_MMP_BACK_TO_FRAME);
-			universe()->makeCommand(COMMAND_ID_OBJECT, universe()->activePlayer()->frame(), COMMAND_SELECTED_MODE_SINGLE);
+			universe()->makeCommand(COMMAND_ID_OBJECT, universe()->activePlayer()->frame(), COMMAND_SELECTED_MODE_NONE);
 		}
 	}
 }
@@ -1713,7 +1717,7 @@ void OnButtonBrigadierChange(CShellWindow* pWnd, InterfaceEventCode code, int pa
 				TerrainButtonData* slotData = &(gameShell->getLogicUpdater().getLogicData()->slots[i]);
 				if(slotData->unit == pUnit){
 					universe()->activePlayer()->ClusterPick(
-						pUnit->attr().ID == UNIT_ATTRIBUTE_TERRAIN_MASTER ? COMMAND_ID_BUILD_MASTER_INC : COMMAND_ID_TERRAIN_MASTER_INC, i);
+						pUnit->attr()->ID == UNIT_ATTRIBUTE_TERRAIN_MASTER ? COMMAND_ID_BUILD_MASTER_INC : COMMAND_ID_TERRAIN_MASTER_INC, i);
 
 					universe()->activePlayer()->soundEvent(SOUND_VOICE_MMP_CONVERT_COMMAND);
 					break;

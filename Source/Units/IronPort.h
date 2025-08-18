@@ -35,19 +35,19 @@ class terCorridor : public terBuildingPowered
 public:
 	terCorridor(const UnitTemplate& data);
 
-	const AttributeCorridor& attr() const {
-		return safe_cast_ref<const AttributeCorridor&>(terUnitReal::attr());
+	const AttributeCorridor* attr() const override {
+		return safe_cast<const AttributeCorridor*>(terBuildingPowered::attr());
 	}
 
 	virtual bool readyToTeleportate() const = 0;
 	virtual void input(terFrame* frame);
 
-	void DestroyLink();
-	void Quant();
+	void DestroyLink() override;
+	void Quant() override;
 
-	void setDamage(const DamageData& damage,terUnitBase* p) {}
+	void setDamage(const DamageData& damage,terUnitBase* p) override {}
 
-	ChainID chainRequest() const { return CHAIN_NONE; }
+	ChainID chainRequest() const override { return CHAIN_NONE; }
 
 protected:
 	terFrame* frame_;

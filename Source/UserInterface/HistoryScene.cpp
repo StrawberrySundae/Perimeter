@@ -6,13 +6,15 @@
 #include "qd_textdb.h"
 #include "tx3d.hpp"
 #include "Localization.h"
+#include "Sample.h"
+#include "AudioPlayer.h"
 
 extern GameShell* gameShell;
 extern cInterfaceRenderDevice* terRenderDevice;
 extern cVisGeneric* terVisGeneric;
-extern HWND hWndVisGeneric;
-extern int terSoundEnable;
+extern int terAudioEnable;
 extern float terSoundVolume;
+extern float GlobalParticleRate;
 
 extern MusicPlayer gb_Music;
 
@@ -42,6 +44,7 @@ HistoryScene::HistoryScene() {
 
 	lastEvent = Controller::CONTROL_SUBMIT_EVENT;
 
+    voice = new SpeechPlayer();
 	interpreter = new Interpreter(this);
 	historyCamera = new HistorySceneCamera(interpreter);
 
@@ -52,8 +55,9 @@ HistoryScene::HistoryScene() {
 
 HistoryScene::~HistoryScene() {
 	done();
-	delete historyCamera;
-	delete interpreter;
+    delete historyCamera;
+    delete interpreter;
+    delete voice;
 }
 
 void HistoryScene::loadProgram(const string& fileName) {
@@ -89,11 +93,9 @@ void HistoryScene::init(cVisGeneric* visGeneric, bool bw, bool addBlendAlphaMode
 
 	bwMode = bw;
 
-	fnt = terVisGeneric->CreateFont("Arial", HISTORY_SCENE_LOG_FONT_SIZE);
-	logFnt = terVisGeneric->CreateFont("Arial", BRIEFING_LOG_FONT_SIZE);
+	fnt = terVisGeneric->CreateGameFont("Arial", HISTORY_SCENE_LOG_FONT_SIZE);
+	logFnt = terVisGeneric->CreateGameFont("Arial", BRIEFING_LOG_FONT_SIZE);
 	m_hPopupTexture = terVisGeneric->CreateTexture(sPopupTexture);
-
-	//TODO this crashes on resync? terVisGeneric->EnableOcclusion(false);
 
 	addBlendAlpha = addBlendAlphaMode;
 
@@ -111,7 +113,7 @@ void HistoryScene::init(cVisGeneric* visGeneric, bool bw, bool addBlendAlphaMode
     Vect2f center(0.5f,0.5f);
     sRectangle4f clip(-0.5f, -0.5f, 0.5f, 0.5f);
     Vect2f focus(1.0f, 1.0f);
-    Vect2f zplane(10.0f,100000.0f);
+    Vect2f zplane(10.0f,1e6f);
     cameraSky->SetFrustum(
             &center,									// центр камеры
             &clip,										// видимая область камеры
@@ -220,7 +222,7 @@ void HistoryScene::done() {
 }
 
 void HistoryScene::quant(const Vect2f& mousePos, float dt) {
-	if (!voice.IsPlay() && playingVoice) {
+	if (!voice->IsPlay() && playingVoice) {
 		playingVoice = false;
 		audioStopped();
 		interpreter->eventOccured(Controller::END_OF_AUDIO_EVENT);
@@ -436,11 +438,8 @@ void HistoryScene::drawPopup() {
 	Vect2f mousePos = historyCamera->getMousePos();
 	World* w = traceWorld(mousePos);
 
-	POINT pt = {xm::round((mousePos.x + 0.5f) * terRenderDevice->GetSizeX()),
-                xm::round((mousePos.y + 0.5f) * terRenderDevice->GetSizeY()) };
-
-	//TODO is this needed to port?
-	//ClientToScreen(hWndVisGeneric, &pt);
+    Vect2i pt = {xm::round((mousePos.x + 0.5f) * terRenderDevice->GetSizeX()),
+                 xm::round((mousePos.y + 0.5f) * terRenderDevice->GetSizeY()) };
 
 	if (w) {
 		std::string frameNames;
@@ -478,7 +477,7 @@ void HistoryScene::drawPopup() {
 		Vect2f va(pos_x - 2, delta_y);
 		Vect2f vb(va.x + v2.x - v1.x + 2, va.y + v2.y - v1.y + 2);
 
-		terRenderDevice->DrawRectangle(va.x, va.y, vb.x - va.x, vb.y - va.y, sColor4c(255, 255, 255, 255), true);
+		terRenderDevice->DrawRectangle(va.x, va.y, vb.x - va.x, vb.y - va.y, sColor4c(255, 255, 255, 255), 1);
 		terRenderDevice->FlushPrimitive2D();
 
 	}
@@ -512,6 +511,10 @@ void HistoryScene::drawSprites() {
 }
 
 void HistoryScene::draw() {
+    //Workaround to reduce lag caused by particles when frames move
+    //we make sure % is never 100% even when options specify 100%
+    float rate = GlobalParticleRate;
+    GlobalParticleRate = 0.5f;
 	sceneSky->Draw(cameraSky);
 	scene->Draw(historyCamera->getCamera());
 
@@ -531,30 +534,25 @@ void HistoryScene::draw() {
                 sColor4f(1, 1, 1, BRIEFING_LOG_ALPHA) );
 		terRenderDevice->SetFont( NULL );
 	}
+    GlobalParticleRate = rate;
 }
 void HistoryScene::postDraw() {
 	sceneSky->PostDraw(cameraSky);
 	scene->PostDraw(historyCamera->getCamera());
 }
 
-void HistoryScene::setupAudio() {
-	if (!terSoundEnable) {
-		stopAudio();
-	}
-	voice.SetVolume(terSoundVolume);
-}
-
 void HistoryScene::startAudio(const string& name) {
 	if (!name.empty()) {
 		stopAudio();
 		interpreter->eventOccured(Controller::END_OF_AUDIO_EVENT);
-		if (terSoundEnable) {
+		if (0 < terSpeechVolume) {
 			playingVoice = true;
-			int ret = voice.OpenToPlay((getLocDataPath() + name).c_str(), 0);
+            voice->SetVolume(terSpeechVolume);
+			int ret = voice->OpenToPlay((getLocDataPath() + name).c_str(), 0);
 			if (!ret) {
                 fprintf(stderr, "startAudio %s error\n", name.c_str());
             }
-			voice.SetVolume(terSoundVolume);
+            resetAudioPosition();
 		}
 	}
 
@@ -583,6 +581,8 @@ void HistoryScene::addCameraPosition(
 
 void HistoryScene::waitFor(Controller::WaitEventType event) {
 	switch (event) {
+        default:
+            break;
 		case Controller::BEGIN_OF_CAMERA_EVENT:
 		case Controller::END_OF_CAMERA_EVENT:
 			lastEvent = event;
@@ -599,6 +599,8 @@ void HistoryScene::clearCameraPath() {
 	} else {
 		if (!interpreter->isNormalSpeedMode()) {
 			switch (lastEvent) {
+                default:
+                    break;
 				case Controller::BEGIN_OF_CAMERA_EVENT:
 					historyCamera->setPositionToBegin();
 					break;
@@ -795,10 +797,36 @@ void HistoryScene::setNormalSpeedMode(bool normal) {
 	}
 	getController()->setNormalSpeedMode(normal);
 }
+
 void HistoryScene::playMusic() {
     if (musicNamePath.empty()) {
         gb_Music.Stop();
     } else {
         PlayMusic(("RESOURCE\\MUSIC\\" + musicNamePath).c_str());
     }
+}
+
+void HistoryScene::stopAudio() {
+    interpreter->eventOccured(Controller::END_OF_AUDIO_EVENT);
+    voice->Stop();
+    resetAudioPosition();
+}
+
+bool HistoryScene::isAudioPlaying() {
+    return voice->IsPlay();
+}
+
+void HistoryScene::resetAudioPosition() {
+    if (voice->IsPlay()) {
+        started_at = clock_us();
+    } else {
+        started_at = 0;
+    }
+}
+
+float HistoryScene::getAudioPosition() {
+    if (started_at == 0 || !voice->IsPlay()) return 0.0f;
+    float pos = static_cast<float>(static_cast<double>(clock_us() - started_at) / 1000000.0);
+    pos /= voice->GetLen();
+    return pos;
 }

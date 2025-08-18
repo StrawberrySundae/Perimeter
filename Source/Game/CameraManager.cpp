@@ -18,6 +18,23 @@ const float CAMERA_MOUSE_DEAD_THRESHOLD = 0.5f;
 //Multiplier of delta speed from center to edge of area
 const float CAMERA_MOUSE_DELTA_FACTOR = 1.5f;
 
+const float CAMERA_ZOOM_GROUND_MAX = 100.0f;
+const float CAMERA_MIN_HEIGHT = 200.0f;
+#if defined(GPX) || 0
+//Original game values
+const float CAMERA_MAX_HEIGHT = 2000.0f;
+const float CAMERA_THETA_MIN = static_cast<float>(XM_PI/10.0);
+const float CAMERA_THETA_MAX = static_cast<float>(XM_PI/3.0);
+#else
+const float CAMERA_MAX_HEIGHT = 10000.0f;
+const float CAMERA_THETA_MIN = static_cast<float>(XM_PI/5.0);
+const float CAMERA_THETA_MAX = static_cast<float>(XM_PI/2.85);
+#endif
+const float CAMERA_ZOOM_MAX = CAMERA_MAX_HEIGHT / 2.0f;
+const float CAMERA_ZOOM_MIN = CAMERA_MIN_HEIGHT + 100.0f;
+const float CAMERA_ZOOM_TERRAIN_THRESOLD1 = CAMERA_ZOOM_MIN + CAMERA_ZOOM_GROUND_MAX;
+const float CAMERA_ZOOM_TERRAIN_THRESOLD2 = CAMERA_ZOOM_MAX;
+
 void SetCameraPosition(cCamera *UCamera,const MatXf& Matrix)
 {
 	MatXf ml=MatXf::ID;
@@ -76,18 +93,17 @@ void CameraCoordinate::interpolateHermite(const CameraCoordinate coords[4], floa
 
 void CameraCoordinate::check(bool restricted)
 {
-	float z = FieldCluster::ZeroGround;//(float)(vMap.GetAlt(vMap.XCYCL(round(position().x)),vMap.YCYCL(xm::round(position().y))) >> VX_FRACTION);
-	float zm = 100;
+	static float z = FieldCluster::ZeroGround;//(float)(vMap.GetAlt(vMap.XCYCL(round(position().x)),vMap.YCYCL(xm::round(position().y))) >> VX_FRACTION);
 	
 	position_.z = z;
 	
 	if(distance() < CAMERA_ZOOM_TERRAIN_THRESOLD1)
 		position_.z = z;
 	else if(distance() > CAMERA_ZOOM_TERRAIN_THRESOLD2)
-		position_.z = zm;
+		position_.z = CAMERA_ZOOM_GROUND_MAX;
 	else{
 		float t = (distance() - CAMERA_ZOOM_TERRAIN_THRESOLD1)/(CAMERA_ZOOM_TERRAIN_THRESOLD2 - CAMERA_ZOOM_TERRAIN_THRESOLD1);
-		position_.z = z + t*(zm - z);
+		position_.z = z + t*(CAMERA_ZOOM_GROUND_MAX - z);
 	}
 	
 	float scroll_border = (distance() - CAMERA_ZOOM_MIN)/(CAMERA_ZOOM_MAX - CAMERA_ZOOM_MIN)*CAMERA_WORLD_SCROLL_BORDER;
@@ -95,8 +111,8 @@ void CameraCoordinate::check(bool restricted)
 	position_.y = clamp(position().y, scroll_border, vMap.V_SIZE - scroll_border);
 	position_.z = FieldCluster::ZeroGround;
 
+    distance_ = clamp(distance(), CAMERA_ZOOM_MIN, CAMERA_ZOOM_MAX);
 	if(restricted){
-		distance_ = clamp(distance(), CAMERA_ZOOM_MIN, CAMERA_ZOOM_MAX);
 		//максимально допустимый наклон на данной высоте
 		//  линейно от CAMERA_THETA_MIN на CAMERA_ZOOM_MIN
 		//          до CAMERA_THETA_MAX на CAMERA_ZOOM_MAX
@@ -104,12 +120,8 @@ void CameraCoordinate::check(bool restricted)
 		float theta_max = CAMERA_THETA_MIN + t*(CAMERA_THETA_MAX - CAMERA_THETA_MIN);
 
 		theta_ = clamp(theta(), 0, theta_max);
+    }
 
-//		distance_ = clamp(distance(), CAMERA_ZOOM_MIN, CAMERA_ZOOM_MAX);
-	}
-	else
-		distance_ = clamp(distance(), 100, 10000);
-	
 	//psi_ = cycle(psi(), 2*XM_PI);
 }
 
@@ -173,7 +185,8 @@ void terCameraType::setFocus(float focus)
 void terCameraType::update()
 {
 	Vect3f position;
-	position.setSpherical(coordinate().psi(), coordinate().theta(), coordinate().distance());
+	auto aspectScale = ((float) terScreenSizeX) / terScreenSizeY / (4.0f / 3);
+	position.setSpherical(coordinate().psi(), coordinate().theta(), coordinate().distance() * aspectScale);
 	position += coordinate().position();
 	if(oscillatingTimer_()){
 		float t = (float)(explodingDuration_ - oscillatingTimer_())/1000;
@@ -181,10 +194,8 @@ void terCameraType::update()
 		position.y += explodingFactor_*cameraExplodingPrm.y(t);
 		position.z += explodingFactor_*cameraExplodingPrm.z(t);
 	}
-	if(restricted())
-		position.z = clamp(position.z, CAMERA_MIN_HEIGHT, CAMERA_MAX_HEIGHT);
-	else
-		position.z = clamp(position.z, coordinate().height(), 10000);
+    
+    position.z = clamp(position.z, restricted() ? CAMERA_MIN_HEIGHT : coordinate().height(), CAMERA_MAX_HEIGHT);
 
 	matrix_ = MatXf::ID;
 	matrix_.rot() = Mat3f(coordinate().theta(), X_AXIS)*Mat3f(XM_PI/2 - coordinate().psi(), Z_AXIS);
@@ -198,7 +209,7 @@ void terCameraType::SetFrustumGame()
     Vect2f center(0.5f,0.5f);
     sRectangle4f clip(-0.5f,-0.5f,0.5f,0.5f);
     Vect2f focus(focus_,focus_);
-    Vect2f zplane(30.0f,10000.0f);
+    Vect2f zplane(30.0f,1e5f);
 	Camera->SetFrustum(								// устанавливается пирамида видимости
 		&center,									// центр камеры
 		&clip,										// видимая область камеры
@@ -212,7 +223,7 @@ void terCameraType::SetFrustumMenu()
     Vect2f center(0.5f,0.5f);
     sRectangle4f clip(-0.5f,-0.5f,0.5f,0.5f);
     Vect2f focus(focus_,focus_);
-    Vect2f zplane(30.0f,10000.0f);
+    Vect2f zplane(30.0f,1e5f);
     Camera->SetFrustum(								// устанавливается пирамида видимости
             &center,								// центр камеры
             &clip,									// видимая область камеры
@@ -226,7 +237,7 @@ void terCameraType::SetFrustumCutScene()
     Vect2f center(0.5f,0.5f);
     sRectangle4f clip(-0.5f,CUT_SCENE_TOP,0.5f,CUT_SCENE_BOTTOM);
     Vect2f focus(focus_,focus_);
-    Vect2f zplane(30.0f,10000.0f);
+    Vect2f zplane(30.0f,1e5f);
     Camera->SetFrustum(								// устанавливается пирамида видимости
             &center,								// центр камеры
             &clip,									// видимая область камеры
@@ -269,35 +280,35 @@ void terCameraType::controlQuant()
 //	cameraMouseZoom = isPressed(VK_LBUTTON) && isPressed(VK_RBUTTON);
 	
 	if(!unit_follow){
-		if(g_controls_converter.key(CTRL_CAMERA_MOVE_DOWN).pressed())
+		if(g_controls_converter.pressed(CTRL_CAMERA_MOVE_DOWN))
 			cameraPositionForce.y = CAMERA_SCROLL_SPEED_DELTA;
 		
-		if(g_controls_converter.key(CTRL_CAMERA_MOVE_UP).pressed())
+		if(g_controls_converter.pressed(CTRL_CAMERA_MOVE_UP))
 			cameraPositionForce.y = -CAMERA_SCROLL_SPEED_DELTA;
 		
-		if(g_controls_converter.key(CTRL_CAMERA_MOVE_RIGHT).pressed())
+		if(g_controls_converter.pressed(CTRL_CAMERA_MOVE_RIGHT))
 			cameraPositionForce.x = CAMERA_SCROLL_SPEED_DELTA;
 		
-		if(g_controls_converter.key(CTRL_CAMERA_MOVE_LEFT).pressed())
+		if(g_controls_converter.pressed(CTRL_CAMERA_MOVE_LEFT))
 			cameraPositionForce.x = -CAMERA_SCROLL_SPEED_DELTA;
 	}
 	
-	if(g_controls_converter.key(CTRL_CAMERA_ROTATE_UP).pressed())
+	if(g_controls_converter.pressed(CTRL_CAMERA_ROTATE_UP))
 		cameraThetaForce = -CAMERA_KBD_ANGLE_SPEED_DELTA;
 	
-	if(g_controls_converter.key(CTRL_CAMERA_ROTATE_DOWN).pressed())
+	if(g_controls_converter.pressed(CTRL_CAMERA_ROTATE_DOWN))
 		cameraThetaForce = CAMERA_KBD_ANGLE_SPEED_DELTA;
 	
-	if(g_controls_converter.key(CTRL_CAMERA_ROTATE_LEFT).pressed())
+	if(g_controls_converter.pressed(CTRL_CAMERA_ROTATE_LEFT))
 		cameraPsiForce = CAMERA_KBD_ANGLE_SPEED_DELTA;
 	
-	if(g_controls_converter.key(CTRL_CAMERA_ROTATE_RIGHT).pressed())
+	if(g_controls_converter.pressed(CTRL_CAMERA_ROTATE_RIGHT))
 		cameraPsiForce = -CAMERA_KBD_ANGLE_SPEED_DELTA;
 	
-	if(g_controls_converter.key(CTRL_CAMERA_ZOOM_INC).pressed())
+	if(g_controls_converter.pressed(CTRL_CAMERA_ZOOM_INC))
 		cameraZoomForce = -CAMERA_ZOOM_SPEED_DELTA;
 	
-	if(g_controls_converter.key(CTRL_CAMERA_ZOOM_DEC).pressed())
+	if(g_controls_converter.pressed(CTRL_CAMERA_ZOOM_DEC))
         cameraZoomForce = CAMERA_ZOOM_SPEED_DELTA;
 }
 
@@ -383,29 +394,36 @@ void terCameraType::tilt(Vect2f mouseDelta)
     }
 }
 
-bool terCameraType::cursorTrace(const Vect2f& pos2, Vect3f& v)
-{
-	Vect3f pos,dir;
-	GetCamera()->GetWorldRay(pos2, pos, dir);
-	return terScene->Trace(pos,pos+dir,&v);
+bool terCameraType::cursorTrace(const Vect2f& cursor, Vect3f& trace) const {
+    return terCameraType::cursorTrace(GetCamera(), cursor, &trace, false, false);
 }
 
-void terCameraType::shift(const Vect2f& mouseDelta)
-{
-	if (gameShell->isCutSceneMode()) {
-		return;
-	}
-	if(interpolationTimer_ || unit_follow)
-		return;
+bool terCameraType::cursorTrace(const cCamera* camera, const Vect2f& cursor, Vect3f* trace, bool ignore_height, bool ignore_bounds) {
+	Vect3f pos,dir;
+    camera->GetWorldRay(cursor, pos, dir);
+	return terScene->Trace(pos, pos+dir, trace, ignore_height, ignore_bounds);
+}
 
-	Vect2f delta = mouseDelta;
-	Vect3f v1, v2;
-	if(cursorTrace(Vect2f::ZERO, v1) && cursorTrace(delta, v2))
-		delta = v2 - v1; 
-	else
-		delta = Vect2f::ZERO;
-	
-	coordinate().position() -= to3D(delta, 0);
+bool terCameraType::shift(const cCamera* originCamera, const Vect3f& originCameraPos, const Vect3f& originWorldPos, const Vect2f& mousePos) {
+    if (gameShell->isCutSceneMode() || interpolationTimer_ || unit_follow) {
+        return false;
+    }
+
+    Vect3f worldPos;
+    if (!terCameraType::cursorTrace(
+        originCamera,
+        mousePos,
+        &worldPos,
+        true,
+        true
+    )) return false;
+    
+    //Take the current projected world pos from mouse at "worldPos", get delta from origin world pos at "originWorldPos"
+    //and reverse it, so it looks like player is dragging the map, then add the original camera coordinate's pos
+    //at "originCameraPos" to obtain the new camera position during drag operation
+    coordinate_.position() = (worldPos - originWorldPos) * Vect3f(-1, -1, 0) + originCameraPos;
+    update();
+    return true;
 }
 
 void terCameraType::mouseWheel(int delta)
@@ -469,7 +487,8 @@ void terCameraType::quant(float mouseDeltaX, float mouseDeltaY, float delta_time
         limitValue(cameraZoomForce, CAMERA_ZOOM_SPEED_DELTA * zoom_force_limit);
 		cameraZoomVelocity += cameraZoomForce*CAMERA_ZOOM_SPEED_MASS * zoom_factor;
 		coordinate().distance() += cameraZoomVelocity*delta_time;
-		
+
+#if 0
 		if(restricted()){
 			//if(!cameraMouseTrack){
 			//при зуме камера должна принимать макс. допустимый наклон
@@ -478,7 +497,8 @@ void terCameraType::quant(float mouseDeltaX, float mouseDeltaY, float delta_time
 				cameraThetaForce += CAMERA_KBD_ANGLE_SPEED_DELTA;
 			//}
 		}
-		
+#endif
+        
 		//move
 		cameraPositionVelocity += cameraPositionForce*CAMERA_SCROLL_SPEED_MASS*move_factor;
 		
@@ -562,7 +582,7 @@ void terCameraType::RestoreCamera(int n)
 	if(!cameraSavePoints[n])
 		return;
 	
-	setTarget(*cameraSavePoints[n], 1000);
+	setTarget(*cameraSavePoints[n], 500);
 }
 
 void terCameraType::SetCameraFollow(terUnitBase* unit, int transitionTime)
@@ -574,8 +594,8 @@ void terCameraType::SetCameraFollow(terUnitBase* unit, int transitionTime)
 void terCameraType::destroyLink()
 {
 	if(unit_follow && (!unit_follow->alive() 
-	  || (unit_follow->attr().ID == UNIT_ATTRIBUTE_SQUAD && safe_cast<terUnitSquad*>(unit_follow)->Empty()))){
-		SetCameraFollow(0);
+	  || (unit_follow->attr()->ID == UNIT_ATTRIBUTE_SQUAD && safe_cast<terUnitSquad*>(unit_follow)->Empty()))){
+		SetCameraFollow(nullptr);
 	}
 }
 
@@ -662,7 +682,7 @@ void terCameraType::loadPath(const SaveCameraSplineData& data, bool addCurrentPo
 	}
 	std::vector<SaveCameraData>::const_iterator i;
 	FOR_EACH(data.path, i){
-		path_.push_back(CameraCoordinate());
+		path_.emplace_back();
 		path_.back().load(*i);
 	}
 }

@@ -1,11 +1,8 @@
 #include "StdAfx.h"
-#include "Player.h"
-#include "RealInterpolation.h"
 #include "Universe.h"
 
 #include "Squad.h"
 #include "SecondLegion.h"
-#include "PerimeterSound.h"
 #include "Triggers.h"
 #include "AIPrm.h"
 #include "EditArchive.h"
@@ -43,7 +40,7 @@ terUnitLegionary::terUnitLegionary(const UnitTemplate& data) : terUnitReal(data)
 	inSquad_ = false;
 	isDisintegrating_ = false;
 
-	int composition[] = { attr().damageMolecula[0], attr().damageMolecula[1], attr().damageMolecula[2] };
+	int composition[] = { attr()->damageMolecula[0], attr()->damageMolecula[1], attr()->damageMolecula[2] };
 	BodyPoint->setComposition(composition);
 
 	requestStatus_ = 0;
@@ -63,9 +60,9 @@ terUnitLegionary::terUnitLegionary(const UnitTemplate& data) : terUnitReal(data)
 	deltaPath_ = 0;
 
 	movementConsumption_ = 0;
-	if(attr().movementConsumption.enabled()){
+	if(attr()->movementConsumption.enabled()){
 		movementConsumption_ = new EnergyConsumer;
-		movementConsumption_->attach(Player, attr().movementConsumption);
+		movementConsumption_->attach(Player, attr()->movementConsumption);
 	}
 }
 
@@ -114,9 +111,17 @@ void terUnitLegionary::AvatarQuant()
 		
 		avatar()->Show();
 		realAvatar()->setSight(SightFactor);
-		realAvatar()->setHeal(HealFactor);
-		realAvatar()->setFreeze(FreezeFactor);
-		realAvatar()->setHot(HotFactor);
+        
+        float maxFactor = 1.0f;
+        //Conductors have electro effect in mesh that becomes red when hot, mitigate this
+        const AttributeLegionary* attrs = attr();
+        if (attrs && attrs->ID == UNIT_ATTRIBUTE_CONDUCTOR) {
+            maxFactor = 0.5f;
+        }
+
+        realAvatar()->setHeal(min(HealFactor, maxFactor));
+        realAvatar()->setFreeze(min(FreezeFactor, maxFactor));
+        realAvatar()->setHot(min(HotFactor, maxFactor));
 
 		if(MoveSoundPoint){
 			MoveSoundPoint->setVolume(SpeedFactor);
@@ -138,7 +143,7 @@ void terUnitLegionary::Start()
 
 float terUnitLegionary::formationRadius() const
 {
-	return !attr().is_base_unit ? radius()*attr().formationRadiusFactor : getSquad()->attr().formationRadiusBase;
+	return !attr()->is_base_unit ? radius()*attr()->formationRadiusFactor : getSquad()->attr()->formationRadiusBase;
 }
 
 void terUnitLegionary::finalizeConstruction()
@@ -147,7 +152,7 @@ void terUnitLegionary::finalizeConstruction()
 
 	setCollisionGroup(collisionGroup() | COLLISION_GROUP_REAL);
 	
-	switch(attr().ID){
+	switch(attr()->ID){
 	case UNIT_ATTRIBUTE_TECHNIC:
 	case UNIT_ATTRIBUTE_OFFICER:
 	case UNIT_ATTRIBUTE_SOLDIER:
@@ -232,7 +237,7 @@ void terUnitLegionary::WayPointController()
 			}
 		}
 		else {
-			if(attr().is_base_unit && SquadPoint->isTransport())
+			if(attr()->is_base_unit && SquadPoint->isTransport())
 				transportPoint_ = SquadPoint->RequestTransportPoint(this);
 
 			if(!manualAttackTarget_ && attackTarget_ && attackTarget_->isBuilding() && attackTarget_->Player->isWorld())
@@ -289,7 +294,8 @@ void terUnitLegionary::Quant()
 
 	if(attackTarget_ && !targetEventTimer_){
 		targetEventTimer_.start(targetEventTime + terLogicRND(targetEventTime));
-		universe()->checkEvent(EventUnitMyUnitEnemy(Event::AIM_AT_OBJECT, attackTarget_, this));
+        EventUnitMyUnitEnemy ev(Event::AIM_AT_OBJECT, attackTarget_, this);
+		universe()->checkEvent(&ev);
 	}
 	
 //	if(FieldCluster::get_player_id(field_dispatcher->getIncludingCluster(position())) != Player->playerID())
@@ -298,7 +304,9 @@ void terUnitLegionary::Quant()
 
 
 	//bool isMoving = getSquad() && !getSquad()->noWayPoints();
-	switch(attr().LegionType){
+	switch(attr()->LegionType){
+        case LEGION_GROUND:
+            break;
 	case LEGION_FLYING:
 		if(!isMoving())
 			BodyPoint->setFlyingMode(1); // 0
@@ -314,7 +322,7 @@ void terUnitLegionary::Quant()
 		}
 
 		if(!moving){
-			if(BodyPoint->diggingMode() && (attr().destroyZeroLayer || !vMap.checkZeroLayer(position().xi(),position().yi()))){
+			if(BodyPoint->diggingMode() && (attr()->destroyZeroLayer || !vMap.checkZeroLayer(position().xi(),position().yi()))){
 				toolzerController_.requestPhase(TOOLZER_PHASE_END_MOVE);
 				BodyPoint->setDiggingMode(0);
 			}
@@ -323,7 +331,7 @@ void terUnitLegionary::Quant()
 		if(BodyPoint->underGround())
 			setUnitClass(UNIT_CLASS_UNDERGROUND);
 		else
-			setUnitClass(attr().UnitClass);
+			setUnitClass(attr()->UnitClass);
 
 	}	break;
 	}
@@ -487,7 +495,7 @@ void terUnitLegionary::setInSquad()
 {
 	if(!inSquad()){
 		inSquad_ = true;
-		DamageMolecula atom(attr().damageMolecula);
+		DamageMolecula atom(attr()->damageMolecula);
 		atom += transportAtom();
 		getSquad()->addSquadMutationMolecula(atom);
 	}
@@ -623,7 +631,7 @@ ChainID terUnitLegionary::chainRequest() const
 	if(id != CHAIN_NONE) 
 		return id;
 
-	if(attr().LegionType == LEGION_SUBTERRANEAN && !BodyPoint->diggingMode() && BodyPoint->onGround())
+	if(attr()->LegionType == LEGION_SUBTERRANEAN && !BodyPoint->diggingMode() && BodyPoint->onGround())
 		return CHAIN_STOP;
 
 	if(isMoving())
@@ -634,7 +642,7 @@ ChainID terUnitLegionary::chainRequest() const
 
 int terUnitLegionary::RequestScriptMove()
 {
-	switch(attr().LegionType){
+	switch(attr()->LegionType){
 	case LEGION_FLYING:
 		BodyPoint->setFlyingMode(1);
 		break;

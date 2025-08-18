@@ -1,4 +1,5 @@
 #include "StdAfxRD.h"
+#include "DrawBuffer.h"
 #include "MeshBank.h"
 #include "MeshTri.h"
 #include "Scene.h"
@@ -33,31 +34,26 @@ static int16_t FindNewPoint(Points& p,int16_t texel)
 	return p.new_base_index;
 }
 
-cMeshStatic::cMeshStatic(const char* materialname)
-{
-	temp=NULL;
+cMeshStatic::cMeshStatic(const char* materialname) {
 	MaterialName=materialname;
-	ib_polygon=0;
 }
 
-cMeshStatic::~cMeshStatic()
-{
-	if(temp)delete temp;
-
-	std::vector<cMeshTri*>::iterator it;
-	FOR_EACH(meshes,it)
-		delete *it;
+cMeshStatic::~cMeshStatic() {
+    for (auto mesh : meshes) {
+        delete mesh;
+    }
 }
 
 void cMeshStatic::BeginBuildMesh()
 {
-	VISASSERT(temp==NULL);
-	temp=new TEMP; 
+    VISASSERT(vertexes.empty());
+    VISASSERT(polygons.empty());
+    vertexes.clear();
+    polygons.clear();
 }
 
 cMeshTri* cMeshStatic::AddMesh(std::vector<Vect3f> &Vertex, std::vector<sPolygon> &Polygon, std::vector<sPolygon> &TexPoly, std::vector<Vect2f> &Texel)
 {
-	VISASSERT(temp);
 	VISASSERT(Polygon.size()==TexPoly.size() || TexPoly.size()==0);
 	DeleteSingularPolygon(Vertex,Polygon,TexPoly,Texel);
 
@@ -120,8 +116,8 @@ cMeshTri* cMeshStatic::AddMesh(std::vector<Vect3f> &Vertex, std::vector<sPolygon
 				for(int j=0;j<p.texel.size();j++,cur_vertex++)
 				{
 					sVertexXYZNT1& v=new_vertex[cur_vertex];
-					v.pos=Vertex[i];
-					*((Vect3f*)&v.n)=p.normal;
+					v.setPos(Vertex[i]);
+					p.normal.write(v.n);
 					
 					Vect2f& t=Texel[p.texel[j]];
 					v.uv[0]=t.x;
@@ -130,8 +126,8 @@ cMeshTri* cMeshStatic::AddMesh(std::vector<Vect3f> &Vertex, std::vector<sPolygon
 			}else
 			{
 				sVertexXYZNT1& v=new_vertex[cur_vertex++];
-				v.pos=Vertex[i];
-				*((Vect3f*)&v.n)=p.normal;
+				v.setPos(Vertex[i]);
+				p.normal.write(v.n);
 				
 				v.uv[0]=v.uv[1]=0;
 			}
@@ -162,24 +158,25 @@ cMeshTri* cMeshStatic::AddMesh(std::vector<Vect3f> &Vertex, std::vector<sPolygon
 	cMeshTri* pTri=new cMeshTri;
 	meshes.push_back(pTri);
 
-	pTri->OffsetPolygon=temp->polygons.size();
-	pTri->OffsetVertex=temp->vertex.size();
+	pTri->OffsetPolygon=polygons.size();
+	pTri->OffsetVertex=vertexes.size();
 	pTri->NumPolygon=n_polygon;
 	pTri->NumVertex=n_vertex;
 
-	temp->polygons.resize(pTri->OffsetPolygon+n_polygon);
-	temp->vertex.resize(pTri->OffsetVertex+n_vertex);
-	for(i=0;i<n_polygon;i++)
-	{
-		sPolygon& to=temp->polygons[i+pTri->OffsetPolygon];
+	polygons.resize(pTri->OffsetPolygon+n_polygon);
+    vertexes.resize(pTri->OffsetVertex+n_vertex);
+    
+	for (i=0;i<n_polygon;i++) {
+		sPolygon& to=polygons[i+pTri->OffsetPolygon];
 		to=new_polygon[i];
 		to.p1+=pTri->OffsetVertex;
 		to.p2+=pTri->OffsetVertex;
 		to.p3+=pTri->OffsetVertex;
 	}
 
-	for(i=0;i<n_vertex;i++)
-		temp->vertex[pTri->OffsetVertex+i]=new_vertex[i];
+	for (i=0;i<n_vertex;i++) {
+        vertexes[pTri->OffsetVertex + i] = new_vertex[i];
+    }
 /*
 #ifdef _DEBUG
 	for(i=0;i<n_vertex;i++)
@@ -195,40 +192,40 @@ cMeshTri* cMeshStatic::AddMesh(std::vector<Vect3f> &Vertex, std::vector<sPolygon
 
 void cMeshStatic::EndBuildMesh(bool bump)
 {
-	VISASSERT(temp);
+    size_t n_vertex=vertexes.size();
+    size_t n_polygon=polygons.size();
+    size_t n_indices = n_polygon * sPolygon::PN;
 
-	int Material=0;
-	int n_vertex=temp->vertex.size();
-	int n_polygon=temp->polygons.size();
+    //Write vertex and indices into DrawBuffer
+    int fmt = sVertexXYZNT1::fmt;
+#ifdef PERIMETER_D3D9
+    if (bump && gb_RenderDevice->GetRenderSelection() == DEVICE_D3D9) {
+        fmt = sVertexDot3::fmt;
+    }
+#endif
+    db.Create(n_vertex, false, n_indices, false, fmt, PT_TRIANGLES);
 
-	gb_RenderDevice->CreateVertexBuffer(vb,n_vertex,bump?sVertexDot3::fmt:sVertexXYZNT1::fmt);
+    void* pVertex = nullptr;
+    indices_t* indices = nullptr;
+    db.LockRaw(n_vertex, n_indices, pVertex, indices, true);
+    //Since DB vertex may be sVertexXYZNT1 or bigger than sVertexXYZNT1 we need to go by VertexSize
+    for (int i = 0; i < n_vertex; i++) {
+        uint8_t* v = reinterpret_cast<uint8_t*>(pVertex) + i * db.vb.VertexSize;
+        memcpy(v, &(vertexes[i]), sizeof(sVertexXYZNT1));
+    }
+    memcpy(indices, polygons.data(), n_indices * sizeof(indices_t));
+    db.Unlock();
 
-	void *pVertex=gb_RenderDevice->LockVertexBuffer(vb);
-	int i;
-	for(i=0;i<n_vertex;i++)
-		GetVertex(pVertex,i)=temp->vertex[i];
-	gb_RenderDevice->UnlockVertexBuffer(vb);
-
-	gb_RenderDevice->CreateIndexBuffer(ib,n_polygon);
-	sPolygon *IndexPolygon=gb_RenderDevice->LockIndexBuffer(ib);
-	for(i=0;i<n_polygon;i++)
-		IndexPolygon[i]=temp->polygons[i];
-	gb_RenderDevice->UnlockIndexBuffer(ib);
-
-	std::vector<cMeshTri*>::iterator it;
-	FOR_EACH(meshes,it)
-	{
-		cMeshTri* p=*it;
-		p->ib=&ib;
-		p->vb=&vb;
-
-		if(bump)
-			p->CalcBumpST();
+	for (cMeshTri* p : meshes) {
+        p->db=&db;
+        p->dbr.offset = p->OffsetPolygon * sPolygon::PN;
+        p->dbr.len = p->NumPolygon * sPolygon::PN;
+        p->VertexBuffer = &vertexes[p->OffsetVertex];
+        p->PolygonBuffer = &polygons[p->OffsetPolygon];
+		if (bump) {
+            p->CalcBumpST();
+        }
 	}
-
-	delete temp;
-	temp=NULL;
-	ib_polygon=n_polygon;
 }
 
 void cMeshStatic::SortPolygon(sPolygon* polygon,int n_polygon)
@@ -346,15 +343,19 @@ void cMeshBank::SetTexture(int n,cTexture * pTexture,int attr)
 	VISASSERT(n>=0 && n<NUMBER_OBJTEXTURE);
 
 	bank->Material.ClearAttribute(attr);
-	if(Texture[n]) { Texture[n]->Release(); Texture[n]=0; } 
+	if (Texture[n]) {
+        Texture[n]->Release(); Texture[n]=0;
+    } 
 
-	if(n==1)
-		bank->Material.PutAttribute(MAT_BUMP,pTexture && pTexture->GetAttribute(MAT_BUMP));
+	if(n==1) {
+        bank->Material.PutAttribute(MAT_BUMP, pTexture && pTexture->GetAttribute(MAT_BUMP));
+    }
 
 	Texture[n]=pTexture;
-	if(pTexture) bank->Material.SetAttribute(attr);
-	if(n==0) 
-	{ 
+	if (pTexture) {
+        bank->Material.SetAttribute(attr);
+    }
+	if (n==0) { 
 		if(Texture[0])
 			bank->Material.SetAttribute(Texture[0]->GetAttribute(TEXTURE_ALPHA_BLEND|TEXTURE_ALPHA_TEST));
 	}
@@ -484,7 +485,7 @@ cMeshBank* cMeshBank::BuildStaticCopy()
 	return pnew;
 }
 
-cTexture* LoadTextureDef(const char* name,const char* path,const char* def_path,char* attr=NULL);
+cTexture* LoadTextureDef(const char* name,const char* path,const char* def_path,const char* attr=NULL);
 
 cTexture* TextureWithAnnoterPath(cTexture* pTexture,const char* annoter_path,const char* def_texture_path)
 {
@@ -627,8 +628,8 @@ cMeshTri* cMeshStatic::AddMesh(std::vector<Vect3f> &Vertex, std::vector<sPolygon
 		for(i=0;i<n_vertex;i++)
 		{
 			sVertexXYZNT1& v=new_vertex[i];
-			v.pos=Vertex[i];
-			v.n=Normal[i];
+			Vertex[i].write(v.pos);
+			Normal[i].write(v.n);
 			Vect2f& t=Texel[i];
 			v.uv[0]=t.x;
 			v.uv[1]=t.y;
@@ -638,8 +639,8 @@ cMeshTri* cMeshStatic::AddMesh(std::vector<Vect3f> &Vertex, std::vector<sPolygon
 		for(i=0;i<n_vertex;i++)
 		{
 			sVertexXYZNT1& v=new_vertex[i];
-			v.pos=Vertex[i];
-			v.n=Normal[i];
+			Vertex[i].write(v.pos);
+			Normal[i].write(v.n);
 			v.uv[0]=0;
 			v.uv[1]=0;
 		}
@@ -650,24 +651,24 @@ cMeshTri* cMeshStatic::AddMesh(std::vector<Vect3f> &Vertex, std::vector<sPolygon
 	cMeshTri* pTri=new cMeshTri;
 	meshes.push_back(pTri);
 
-	pTri->OffsetPolygon=temp->polygons.size();
-	pTri->OffsetVertex=temp->vertex.size();
+	pTri->OffsetPolygon=polygons.size();
+	pTri->OffsetVertex=vertexes.size();
 	pTri->NumPolygon=n_polygon;
 	pTri->NumVertex=n_vertex;
 
-	temp->polygons.resize(pTri->OffsetPolygon+n_polygon);
-	temp->vertex.resize(pTri->OffsetVertex+n_vertex);
-	for(i=0;i<n_polygon;i++)
-	{
-		sPolygon& to=temp->polygons[i+pTri->OffsetPolygon];
+	polygons.resize(pTri->OffsetPolygon+n_polygon);
+	vertexes.resize(pTri->OffsetVertex+n_vertex);
+	for(i=0;i<n_polygon;i++) {
+		sPolygon& to=polygons[i+pTri->OffsetPolygon];
 		to=new_polygon[i];
 		to.p1+=pTri->OffsetVertex;
 		to.p2+=pTri->OffsetVertex;
 		to.p3+=pTri->OffsetVertex;
 	}
 
-	for(i=0;i<n_vertex;i++)
-		temp->vertex[pTri->OffsetVertex+i]=new_vertex[i];
+	for(i=0;i<n_vertex;i++) {
+        vertexes[pTri->OffsetVertex + i] = new_vertex[i];
+    }
 /*
 #ifdef _DEBUG
 	for(i=0;i<n_vertex;i++)

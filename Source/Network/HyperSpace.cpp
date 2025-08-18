@@ -1,5 +1,6 @@
 #include "NetIncludes.h"
 
+#include <unordered_set>
 #include <SDL.h>
 
 #include "SystemUtil.h"
@@ -11,13 +12,14 @@
 #include "files/files.h"
 #include "GameContent.h"
 #include "codepages/codepages.h"
+#include "qd_textdb.h"
 
 bool net_log_mode=0;
 XBuffer net_log_buffer(8192, 1);
 
 //XStream quantTimeLog("quantTime.log",XS_OUT);
-const char* autoSavePlayReelDir = "AUTOSAVE";
-
+const char* autoSavePlayReelDir = "RESOURCE\\Replay\\Autosave";
+const size_t CHAT_TIP_QUANT = 10;
 
 const char * KEY_REPLAY_REEL="replay";
 
@@ -43,8 +45,8 @@ public:
 	}
 	cFont* getFont(){
 		if(!pfont) {
-			pfont=terVisGeneric->CreateFont("Courier New", 16, 1);//Тихая ошибка
-			if(!pfont)pfont=terVisGeneric->CreateFont("Arial", 16);
+			pfont= terVisGeneric->CreateGameFont("Courier New", 16, 1);//Тихая ошибка
+			if(!pfont)pfont= terVisGeneric->CreateGameFont("Arial", 16);
 		}
 		return pfont;
 	}
@@ -144,10 +146,7 @@ terHyperSpace::terHyperSpace(PNetCenter* net_client, MissionDescription& mission
 		flag_rePlayReel=true;
 		loadPlayReel(mission.playReelPath().c_str());
 	}
-	if(IniManager("Perimeter.ini").getInt("Game","AutoSavePlayReel")!=0){
-		flag_autoSavePlayReel=true;
-        create_directories(autoSavePlayReelDir);
-	}
+	flag_autoSavePlayReel = IniManager("Perimeter.ini").getInt("Game","AutoSavePlayReel") != 0;
 
 	currentQuant=0;
 	//flag_endCurQuant=0;
@@ -157,7 +156,7 @@ terHyperSpace::terHyperSpace(PNetCenter* net_client, MissionDescription& mission
 	net_log_buffer.init();
 
     if (!mission.gameContent) {
-        mission.gameContent = mission.missionNumber < 0 ? terGameContentSelect : getGameContentCampaign();
+        mission.gameContent = mission.isCampaign() ? getGameContentCampaign() : terGameContentSelect;
     }
 
 	//if(flag_rePlayReel) mission=curMission; //Порядок Важен!
@@ -222,39 +221,62 @@ size_t terHyperSpace::serializeGameCommands(XBuffer& out) const {
 }
 
 void terHyperSpace::deserializeGameCommands(XBuffer& in, size_t len) {
+    if (len < sizeof(endQuant_inReplayListGameCommands)) {
+        xassert(0);
+        return;
+    }
     len -= in.read(&endQuant_inReplayListGameCommands, sizeof(endQuant_inReplayListGameCommands));
-    xassert(len >= 0);
     
-    InOutNetComBuffer in_buffer(len, true); //проверить необходимость автоувелечения!
-    in_buffer.putBufferPacket(in.address()+in.tell(), len);
+    if (len < SIZE_NETCOM_PACKET_HEAD) {
+        return;
+    }
+    InOutNetComBuffer in_buffer(len, false);
+    char* data_ptr = in.address() + in.tell();
+    uint32_t packet_id = *(reinterpret_cast<uint32_t*>(data_ptr));
+    if (packet_id != NETCOM_BUFFER_PACKET_ID) {
+        in_buffer.automatic_realloc = true;
+        event_size_t event_len = 0;
+        size_t event_start = 0;
+        while (in.tell() + sizeof(event_len) < in.length()) {
+            event_start = in.tell();
+            in.read(&event_len, sizeof(event_len));
+            if (event_len == 0 || (in.tell() + event_len) > in.length()) {
+                break;
+            }
+            in_buffer.write(&NETCOM_BUFFER_PACKET_ID, sizeof(NETCOM_BUFFER_PACKET_ID));
+            in_buffer.write(&event_len, sizeof(event_len));
+            in_buffer.write(data_ptr + event_start, event_len);
+            in.set(event_start + event_len);
+        }
+        in_buffer.filled_size = in_buffer.tell();
+        in_buffer.set(0);
+    } else {
+        in_buffer.putBufferPacket(data_ptr, len);
+    }    
 
-    while(in_buffer.currentNetCommandID()!=NETCOM_ID_NONE) {
+    while (in_buffer.nextNetCommand() != NETCOM_ID_NONE) {
         terEventID event = (terEventID)in_buffer.currentNetCommandID();
         switch(event){
-            case NETCOM_4G_ID_UNIT_COMMAND:
-            {
+            case NETCOM_4G_ID_UNIT_COMMAND: {
                 netCommand4G_UnitCommand*  pnc= new netCommand4G_UnitCommand(in_buffer);
                 replayListGameCommands.push_back(pnc);
-            }
                 break;
-            case NETCOM_4G_ID_REGION:
-            {
+            }
+            case NETCOM_4G_ID_REGION: {
                 netCommand4G_Region*  pnc= new netCommand4G_Region(in_buffer);
                 replayListGameCommands.push_back(pnc);
-            }
                 break;
-            case NETCOM_4G_ID_FORCED_DEFEAT:
-            {
+            }
+            case NETCOM_4G_ID_FORCED_DEFEAT: {
                 netCommand4G_ForcedDefeat* pnc=new netCommand4G_ForcedDefeat(in_buffer);
                 replayListGameCommands.push_back(pnc);
                 break;
             }
 
             default:
-                xassert(0&&"Incorrect commanf in playReel file!");
+                xassert(0&&"Incorrect command in playReel file!");
                 break;
         }
-        in_buffer.nextNetCommand();
     }
 }
 
@@ -264,7 +286,7 @@ bool terHyperSpace::loadPlayReel(const char* fname)
 
 	if(!checkPlayReelMagic(fi)) ErrH.Abort("Incorrect play reel file!:", XERR_USER, 0, fname);
 
-	int sizeOtherData=fi.size()-fi.tell();
+	size_t sizeOtherData=fi.size()-fi.tell();
 	XBuffer buf(sizeOtherData, true);
 	fi.read(buf.address(), sizeOtherData);
 	//curMission.read(mdBuf);
@@ -313,7 +335,6 @@ terHyperSpace::SAVE_REPLAY_RESULT terHyperSpace::savePlayReel(const char* fname)
     if (fo.ioError()) {
         return SAVE_REPLAY_RW_ERROR_OR_DISK_FULL;
     } else {
-        scan_resource_paths(convert_path_content(REPLAY_PATH));
         return SAVE_REPLAY_OK;
     }
 }
@@ -336,6 +357,7 @@ void terHyperSpace::autoSavePlayReel()
     }
     path += "_" + std::to_string(result);
 	savePlayReel(path.c_str());
+    scan_resource_paths(convert_path_content(autoSavePlayReelDir));
 }
 
 void terHyperSpace::allSavePlayReel()
@@ -352,8 +374,6 @@ void terHyperSpace::allSavePlayReel()
 
 terHyperSpace::~terHyperSpace()
 {
-	allSavePlayReel();
-
 	//Очистка логов
 	clearLogList();
 	//Очистка списков команд
@@ -453,11 +473,8 @@ bool terHyperSpace::MultiQuant()
 		///vMap.generateChAreasInformation(vmapbuf);
 		///pNetCenter->SendEvent(&netCommand4H_BackGameInformation(currentQuant, vmapbuf, net_log_buffer));
 
-#if defined(PERIMETER_DEBUG) || defined(NET_LOG_EXHAUSTIVE)
-		log_var(vMap.getChAreasInformationCRC());
-#endif
-        
-#ifdef NET_LOG_EXHAUSTIVE
+#if defined(NET_LOG_WORLD)
+        log_var(vMap.getChAreasInformationCRC());
         log_var(vMap.getWorldCRC());
 #endif
 
@@ -628,50 +645,32 @@ bool terHyperSpace::SingleQuant()
 //{
 //}
 
-void terHyperSpace::ShowInfo()
-{
-#ifdef PERIMETER_DEBUG
-	if(pNetCenter){
-		XBuffer msg;
-		msg.SetDigits(10);
-		msg < "curQnt: " <= currentQuant;
-		msg < " confirmQnt: " <= confirmQuant;
-		msg < " diffQnt: " <= (currentQuant - confirmQuant);
-		msg < " intrnlLagQnt: " <= lagQuant;
-		msg < " dropQnt: " <= dropQuant;
+std::string terHyperSpace::GetNetInfo() {
+    static size_t rb = 0, sb = 0;
+    static int lastInfoQuant = 0;
+    static int lastInfoQuantTime = 0;
+    static int quantPerSec = 0;
 
-		//terRenderDevice->SetFont(pMonowideFont->getFont());
-		//terRenderDevice->OutText(20, 40, msg, sColor4f(1, 1, 1, 1));
+    int secondQuant = currentQuant/10;
+    if (lastInfoQuant < secondQuant) {
+        lastInfoQuant=secondQuant;
+        rb=pNetCenter->in_ClientBuf.byte_receive;
+        sb=pNetCenter->out_ClientBuf.byte_sending;
+        quantPerSec=10*1000/(clocki()-lastInfoQuantTime);
+        lastInfoQuantTime=clocki();
+    }
 
-		XBuffer msg2;
-		msg2.SetDigits(10);
-		static int rb=0,sb=0;
-		static int lastInfoQuant=0;
-		static int lastInfoQuantTime=0;
-		static int quantPerSec;
-		int secondQuant=currentQuant/10;
-		if(lastInfoQuant < secondQuant) {
-			lastInfoQuant=secondQuant;
-			rb=pNetCenter->in_ClientBuf.getByteReceive();
-			sb=pNetCenter->out_ClientBuf.getByteSending();
-			quantPerSec=10*1000/(clocki()-lastInfoQuantTime);
-			lastInfoQuantTime=clocki();
-		}
-
-		msg < " quantPerSecond:" <= quantPerSec;
-		terRenderDevice->SetFont(pMonowideFont->getFont());
-		//terRenderDevice->OutText(20, 40, msg, sColor4f(1, 1, 1, 1));
-		terRenderDevice->OutText(360, 20, msg, sColor4f(1, 1, 1, 1));
-
-		msg2 < pNetCenter->getStrState();
-		msg2 < " byteReceive=" <= rb < " byteSending=" <=sb;
-		//terRenderDevice->OutText(20, 60, msg2, sColor4f(1, 1, 1, 1));
-		terRenderDevice->OutText(360, 35, msg2, sColor4f(1, 1, 1, 1));
-
-
-		terRenderDevice->SetFont(0);
-	}
-#endif
+    std::string msg = "Net state: ";
+    msg += pNetCenter->getStrState();
+    msg += "\nBytes recv: " + std::to_string(rb) + "\nBytes sent: " + std::to_string(sb);
+    msg += "\n\nQuants:\n current: " + std::to_string(currentQuant);
+    msg += "\n confirm: " + std::to_string(confirmQuant);
+    msg += "\n diff: " + std::to_string(currentQuant - confirmQuant);
+    msg += "\n lag: " + std::to_string(lagQuant);
+    msg += "\n drop: " + std::to_string(dropQuant);
+    msg += "\n per second: " + std::to_string(quantPerSec);
+    
+    return msg;
 }
 
 //По идее вызов корректный т.к. reJoin не пошлется пока игра не остановлена(stopGame_HostMigrate)
@@ -834,6 +833,25 @@ bool terHyperSpace::ReceiveEvent(terEventID event, InOutNetComBuffer& in_buffer)
 					confirmQuant=nc.quantConfirmation_;
 					//clear list 
 					eraseLogListUntil(nc.quantConfirmation_);
+
+                    if (!chatTipDisplayed && CHAT_TIP_QUANT <= confirmQuant) {
+                        chatTipDisplayed = true;
+                        
+                        bool hasClanTeams = false;
+                        std::unordered_set<int> clans = {};
+                        for (const auto& player : gameShell->CurrentMission.playersData) {
+                            if ((player.realPlayerType == REAL_PLAYER_TYPE_PLAYER
+                                || player.realPlayerType == REAL_PLAYER_TYPE_PLAYER_AI
+                            ) && !clans.emplace(player.clan).second) {
+                                hasClanTeams = true;
+                                break;
+                            }
+                        }
+                        LocalizedText text = LocalizedText(qdTextDB::instance().getText(
+                            hasClanTeams ? "Interface.Menu.Messages.Multiplayer.ChatTipClan" : "Interface.Menu.Messages.Multiplayer.ChatTip" 
+                        ), getLocale());
+                        gameShell->serverMessage(&text);
+                    }
 				}
 	#ifdef NETCOM_DBG_LOG
 				netCommandLog < "Quant=" <=nc.numberQuant_ <"\n";
