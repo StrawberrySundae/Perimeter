@@ -1,4 +1,3 @@
-Trigger actions
 
 # Периметр | Perimeter
 
