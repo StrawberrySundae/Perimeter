@@ -28,6 +28,7 @@ target_include_directories(perimeter PRIVATE
         "${PROJECT_SOURCE_DIR}/Source/Terra"
         "${PROJECT_SOURCE_DIR}/Source/tx3d"
         "${PROJECT_SOURCE_DIR}/Source/UserInterface"
+        "${PROJECT_SOURCE_DIR}/Source/Integrations"
         "${PROJECT_SOURCE_DIR}/Source/Network"
         "${PROJECT_SOURCE_DIR}/Source/Units"
         "${PROJECT_SOURCE_DIR}/Source/Physics"
@@ -40,6 +41,7 @@ target_include_directories(perimeter PRIVATE
 
 SET(perimeter_LINK_LIBS
         #Our libs
+        Integrations
         Units
         UserInterface
         AI
@@ -129,6 +131,7 @@ ADD_DEPENDENCIES(Physics dependencies)
 ADD_DEPENDENCIES(AI dependencies)
 ADD_DEPENDENCIES(GeoLogic dependencies)
 ADD_DEPENDENCIES(HT dependencies)
+ADD_DEPENDENCIES(Integrations dependencies)
 ADD_DEPENDENCIES(perimeter dependencies)
 target_compile_options(perimeter PRIVATE ${PERIMETER_COMPILE_OPTIONS})
 
