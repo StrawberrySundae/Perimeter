@@ -1,7 +1,7 @@
 #ifndef PERIMETER_NETRELAY_H
 #define PERIMETER_NETRELAY_H
 
-static const char* NET_RELAY_DEFAULT_ADDRESSES = "cloud.kdlab.com;europe.cloud.kdlab.com";
+static const char* NET_RELAY_DEFAULT_ADDRESSES = "cloud.kdlab.com;europe.cloud.kdlab.com;cloud.dos.zone";
 #ifdef EMSCRIPTEN
 static const uint16_t NET_RELAY_DEFAULT_PORT = 8443;
 #else
