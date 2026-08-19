@@ -412,7 +412,7 @@ void setName(CShellPushButton* btn, int number) {
         return;
     }
     const PlayerData& pd = currMission.playersData[number];
-    if (pd.realPlayerType != REAL_PLAYER_TYPE_AI) {
+    if (pd.realPlayerType == REAL_PLAYER_TYPE_AI) {
         btn->Show(false);
         return;
     }
